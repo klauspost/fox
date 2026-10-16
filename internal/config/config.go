@@ -15,7 +15,7 @@ import (
 type Settings struct {
 	// Level trades time for size, 1 (fast) to 9 (extreme).
 	Level int `json:"level"`
-	// Workers is the number of files processed concurrently. 0 = number of CPUs.
+	// Workers is the number of files processed concurrently. 0 = number of physical CPU cores.
 	Workers            int  `json:"workers"`
 	PreserveTimestamps bool `json:"preserveTimestamps"`
 	LowPriority        bool `json:"lowPriority"`

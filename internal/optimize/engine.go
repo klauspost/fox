@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/klauspost/cpuid/v2"
 	"github.com/klauspost/fox/internal/config"
 	"github.com/klauspost/fox/internal/detect"
 	"github.com/klauspost/fox/internal/pipeline"
@@ -291,10 +292,20 @@ func (e *Engine) Close() {
 	e.Wait()
 }
 
+// defaultWorkers is one file per physical core: SMT siblings add little to CPU-bound
+// compressors but double memory and temp space. NumCPU still caps it, since it honours CPU affinity.
+var defaultWorkers = sync.OnceValue(func() int {
+	n := runtime.NumCPU()
+	if c := cpuid.CPU.PhysicalCores; c > 0 {
+		n = min(n, c)
+	}
+	return n
+})
+
 func (e *Engine) dispatchLocked() {
 	n := e.s.Workers
 	if n == 0 {
-		n = runtime.NumCPU()
+		n = defaultWorkers()
 	}
 	for e.running < n && len(e.queue) > 0 {
 		j := e.queue[0]

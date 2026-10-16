@@ -4,6 +4,7 @@ go 1.26.4
 
 require (
 	github.com/klauspost/compress v1.20.3
+	github.com/klauspost/cpuid/v2 v2.4.1
 	github.com/ncruces/zenity v0.10.15
 	golang.org/x/sys v0.48.0
 )
@@ -85,7 +86,6 @@ require (
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/joho/godotenv v1.5.1 // indirect
 	github.com/josephspurrier/goversioninfo v1.7.0 // indirect
-	github.com/klauspost/cpuid/v2 v2.4.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect

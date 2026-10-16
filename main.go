@@ -29,7 +29,7 @@ func main() { os.Exit(run()) }
 func run() int {
 	var (
 		level       = flag.Int("level", 0, "optimization level, 1 (fast) to 9 (extreme) (default from settings)")
-		workers     = flag.Int("j", 0, "files processed concurrently, 0 = number of CPUs (default from settings)")
+		workers     = flag.Int("j", 0, "files processed concurrently, 0 = number of physical CPU cores (default from settings)")
 		lossy       = flag.Bool("lossy", false, "allow lossy optimization of all image formats")
 		keep        = flag.Bool("keep-metadata", false, "keep metadata in all formats")
 		noCache     = flag.Bool("no-cache", false, "also process files fox has already optimized")

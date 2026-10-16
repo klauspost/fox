@@ -2,7 +2,7 @@
 
 fox makes files smaller without changing what they contain. It runs a chain of established external optimizers
 (oxipng, ECT, Leanify, jpegtran, gifsicle, qpdf, ffmpeg, …) over each file and keeps a result only if it is smaller.
-Several files are processed at once, one per CPU core by default. It has a command line and a local web UI.
+Several files are processed at once, one per physical CPU core by default. It has a command line and a local web UI.
 
 fox is a Go rewrite of [FileOptimizer](https://nikkhokkho.sourceforge.io/static.php?page=FileOptimizer) by
 **Javier Gutiérrez Chamorro**. His years of work picking and tuning these tools is what fox is built on.
@@ -52,7 +52,7 @@ $ fox -level 3 photos logo.png fox.svg
 | Flag             | Effect                                                                     |
 |------------------|----------------------------------------------------------------------------|
 | `-level n`       | 1 (fast) … 9 (extreme). Higher levels try harder.                          |
-| `-j n`           | Files processed concurrently (0 = number of CPUs).                         |
+| `-j n`           | Files processed concurrently (0 = one per physical CPU core).              |
 | `-lossy`         | Allow lossy optimization of JPEG, PNG, GIF and WebP.                       |
 | `-keep-metadata` | Keep metadata in all formats.                                              |
 | `-no-cache`      | Also process files fox has already optimized.                              |
@@ -207,7 +207,7 @@ The defaults:
 | Key | Meaning |
 |---|---|
 | `level` | 1 (fast) … 9 (extreme). |
-| `workers` | Files processed concurrently; 0 = number of CPUs. The steps for one file run one after another. |
+| `workers` | Files processed concurrently; 0 = number of physical CPU cores (SMT threads are not counted). The steps for one file run one after another. |
 | `preserveTimestamps` | Restore the modification time after writing the optimized file. |
 | `lowPriority` | Run tools at below-normal priority, so the machine stays responsive. |
 | `skipOptimized` | Skip files fox already processed with the same settings (hashes are kept in `~/.fox/cache`). |

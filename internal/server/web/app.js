@@ -455,7 +455,7 @@ const PDF_PROFILES = [
 const SCHEMA = [
   { id: 'general', title: 'General', fields: [
     { type: 'level', key: 'level' },
-    { type: 'number', key: 'workers', label: 'Parallel files', hint: '0 uses one file per CPU core', min: 0, max: 512 },
+    { type: 'number', key: 'workers', label: 'Parallel files', hint: '0 uses one file per physical CPU core', min: 0, max: 512 },
     { type: 'bool', key: 'preserveTimestamps', label: 'Preserve timestamps', hint: 'Keep the modification time of optimized files' },
     { type: 'bool', key: 'lowPriority', label: 'Low priority', hint: 'Run tools at below-normal priority so the machine stays responsive' },
     { type: 'bool', key: 'skipOptimized', label: 'Skip already optimized', hint: 'Remember results and skip files fox already optimized with the same settings' },

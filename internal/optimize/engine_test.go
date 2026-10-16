@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/klauspost/cpuid/v2"
 	"github.com/klauspost/fox/internal/config"
 	"github.com/klauspost/fox/internal/detect"
 	"github.com/klauspost/fox/internal/pipeline"
@@ -590,4 +592,12 @@ func TestStaleTempDirs(t *testing.T) {
 	if _, err := os.Stat(live); err != nil {
 		t.Error("recent job dir removed")
 	}
+}
+
+func TestDefaultWorkers(t *testing.T) {
+	n := defaultWorkers()
+	if n < 1 || n > runtime.NumCPU() {
+		t.Fatalf("defaultWorkers() = %d, NumCPU = %d", n, runtime.NumCPU())
+	}
+	t.Logf("physical cores %d, NumCPU %d, default workers %d", cpuid.CPU.PhysicalCores, runtime.NumCPU(), n)
 }
