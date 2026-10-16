@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>fox · File Optimizer X</title>
+<link rel="icon" href="fox.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <img src="fox.svg" alt="" width="34" height="34">
+    <span class="word">fox</span>
+    <span class="sub">File<br>Optimizer X</span>
+  </div>
+  <nav class="actions">
+    <button id="add-files" class="btn primary" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>Add files
+    </button>
+    <button id="add-folder" class="btn" type="button">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 4.5v8h13v-6.5h-7l-1.5-1.5Z"/></svg>Add folder
+    </button>
+    <form id="path-form" class="pathbox" autocomplete="off">
+      <input id="path-input" type="text" spellcheck="false" placeholder="or paste a path…" aria-label="File or folder path">
+    </form>
+    <span class="spacer"></span>
+    <button id="writeback" class="btn accent" type="button" hidden title="Write optimized files back to the dropped originals">
+      Write back <b id="wb-count">0</b>
+    </button>
+    <button id="stop" class="btn ghost" type="button" title="Cancel all queued and running files">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1"/></svg>Stop
+    </button>
+    <button id="clear" class="btn ghost" type="button" title="Remove finished files from the list">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5"/></svg>Clear finished
+    </button>
+    <button id="open-settings" class="icon-btn" type="button" aria-label="Settings" title="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5"/><circle cx="12" cy="12" r="6.6"/></svg>
+    </button>
+  </nav>
+</header>
+
+<div id="offline" class="offline" hidden>fox has stopped. Start it again to continue — this page reconnects automatically.</div>
+
+<section class="readout" aria-label="Totals">
+  <div class="metric">
+    <span class="label">Saved</span>
+    <span class="value" id="t-saved">0 B</span>
+  </div>
+  <div class="metric hero">
+    <span class="label">Reduction</span>
+    <span class="value" id="t-pct">0.0<small>%</small></span>
+  </div>
+  <div class="metric">
+    <span class="label">Files</span>
+    <span class="value" id="t-files">0<small> / 0</small></span>
+  </div>
+  <div class="metric state">
+    <span class="label">Status</span>
+    <span class="value" id="t-state">Idle</span>
+  </div>
+  <div class="progress" aria-hidden="true"><i class="p-done"></i><i class="p-skip"></i><i class="p-fail"></i><i class="p-run"></i></div>
+</section>
+
+<main id="main">
+  <section id="empty" class="empty">
+    <div class="drop">
+      <img class="mark" src="fox.svg" alt="" width="104" height="104">
+      <h1>Drop files.<br><em>Keep every pixel.</em></h1>
+      <p class="lede">fox runs a chain of specialised optimizers over each file and keeps the smallest result. One file per CPU core, lossless by default.</p>
+      <div class="cta">
+        <button class="btn primary big" type="button" data-pick="files">Add files</button>
+        <button class="btn big" type="button" data-pick="folder">Add folder</button>
+      </div>
+      <dl class="explain">
+        <div><dt>Add files / Add folder</dt><dd>optimize in place, right where the files live.</dd></div>
+        <div><dt>Dropped files</dt><dd>are uploaded; the result is written back when the browser allows it (Chrome, Edge), otherwise offered for download.</dd></div>
+      </dl>
+      <ul class="formats" aria-label="Supported formats">
+        <li>JPEG</li><li>PNG</li><li>GIF</li><li>WebP</li><li>SVG</li><li>TIFF</li><li>BMP</li><li>ICO</li>
+        <li>PDF</li><li>HTML</li><li>CSS</li><li>JS</li><li>ZIP · Office · EPUB</li><li>GZ</li><li>TAR</li><li>7Z</li>
+        <li>SQLite</li><li>FLAC</li><li>MP3</li><li>OGG</li><li>WAV</li><li>MP4</li><li>MKV</li><li>EXE</li>
+      </ul>
+    </div>
+  </section>
+
+  <table id="table" class="jobs" hidden>
+    <thead>
+      <tr>
+        <th class="c-name" scope="col">File</th>
+        <th class="c-fmt" scope="col">Format</th>
+        <th class="c-num" scope="col">Original</th>
+        <th class="c-num" scope="col">Optimized</th>
+        <th class="c-gain" scope="col">Saved</th>
+        <th class="c-status" scope="col">Status</th>
+        <th class="c-act" scope="col"><span class="sr">Actions</span></th>
+      </tr>
+    </thead>
+    <tbody id="rows"></tbody>
+    <tbody id="pending"></tbody>
+  </table>
+</main>
+
+<footer class="foot">
+  <span>fox is based on <a href="https://nikkhokkho.sourceforge.io/static.php?page=FileOptimizer" target="_blank" rel="noopener noreferrer">FileOptimizer</a> by Javier Gutiérrez Chamorro</span>
+  <a class="donate" href="https://nikkhokkho.sourceforge.io/images/FileOptimizerDonate.html" target="_blank" rel="noopener noreferrer">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 13.5S2 10 2 6a3 3 0 0 1 6-1 3 3 0 0 1 6 1c0 4-6 7.5-6 7.5Z"/></svg>Donate to the original author
+  </a>
+</footer>
+
+<div id="overlay" class="overlay" hidden>
+  <div class="overlay-card">
+    <img src="fox.svg" alt="" width="72" height="72">
+    <p>Release to optimize</p>
+    <small>Folders are walked recursively</small>
+  </div>
+</div>
+
+<div id="scrim" class="scrim" hidden></div>
+<aside id="settings" class="panel" aria-label="Settings" inert>
+  <header class="panel-head">
+    <h2>Settings</h2>
+    <span id="save-state" class="save-state" aria-live="polite"></span>
+    <button id="close-settings" class="icon-btn" type="button" aria-label="Close settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </header>
+  <div class="panel-body">
+    <nav id="rail" class="rail"></nav>
+    <form id="settings-form" class="sections" autocomplete="off"></form>
+  </div>
+</aside>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

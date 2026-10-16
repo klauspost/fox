@@ -1,0 +1,63 @@
+# Run with `go tool task <name>`.
+version: '3'
+
+vars:
+  VERSION:
+    sh: git describe --tags --always --dirty 2>/dev/null || echo dev
+  PLUGINS: _ref/Win64/Debug/Plugins64
+  BUNDLE: internal/tools/bundle
+
+tasks:
+  default:
+    cmds:
+      - task: build
+
+  bundle:
+    desc: Compress the Windows tools into {{.BUNDLE}} for embedding (PLUGINS=<dir> to override the source, EXCLUDE=magick,gs to leave tools out)
+    # No sources/generates: the result depends on EXCLUDE, and pack only recompresses files that changed.
+    cmds:
+      - go run ./internal/tools/pack -src {{.PLUGINS}} -out {{.BUNDLE}}{{if .EXCLUDE}} -exclude {{.EXCLUDE}}{{end}}
+
+  build:
+    desc: Build bin/fox with the current bundle (OUT=<path without extension> to override)
+    vars:
+      OUT: '{{.OUT | default "bin/fox"}}'
+    cmds:
+      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.OUT}}{{exeExt}} .
+
+  release:
+    desc: Pack all tools and build bin/fox
+    cmds:
+      - task: bundle
+      - task: build
+
+  release-lite:
+    desc: Build bin/fox-lite without ImageMagick and Ghostscript (taken from the host if installed); restores the full bundle afterwards
+    cmds:
+      # Otherwise a later plain build would silently embed the lite bundle.
+      - defer: {task: bundle}
+      - task: bundle
+        vars: {EXCLUDE: 'magick,gs'}
+      - task: build
+        vars: {OUT: bin/fox-lite}
+
+  test:
+    desc: Run all tests
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet
+    cmds:
+      - go vet ./...
+
+  run:
+    desc: Run fox from source (pass arguments after --)
+    cmds:
+      - go run . {{.CLI_ARGS}}
+
+  clean:
+    desc: Remove build output, extracted tools and the packed bundle
+    cmds:
+      - rm -rf bin fox-tools
+      - rm -f {{.BUNDLE}}/*.zst {{.BUNDLE}}/manifest.json
