@@ -6,6 +6,7 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo dev
   PLUGINS: _ref/Win64/Debug/Plugins64
   BUNDLE: internal/tools/bundle
+  LDFLAGS: -s -w -X main.version={{.VERSION}}
 
 tasks:
   default:
@@ -13,33 +14,26 @@ tasks:
       - task: build
 
   bundle:
-    desc: Compress the Windows tools into {{.BUNDLE}} for embedding (PLUGINS=<dir> to override the source, EXCLUDE=magick,gs to leave tools out)
-    # No sources/generates: the result depends on EXCLUDE, and pack only recompresses files that changed.
+    desc: Update the committed tool bundle in {{.BUNDLE}} after changing tools (PLUGINS=<dir> to override the source)
+    # No sources/generates: pack only recompresses files that changed.
     cmds:
-      - go run ./internal/tools/pack -src {{.PLUGINS}} -out {{.BUNDLE}}{{if .EXCLUDE}} -exclude {{.EXCLUDE}}{{end}}
+      - go run ./internal/tools/pack -src {{.PLUGINS}} -out {{.BUNDLE}}
 
   build:
-    desc: Build bin/fox with the current bundle (OUT=<path without extension> to override)
-    vars:
-      OUT: '{{.OUT | default "bin/fox"}}'
+    desc: Build bin/fox with all tools
     cmds:
-      - go build -trimpath -ldflags "-s -w -X main.version={{.VERSION}}" -o {{.OUT}}{{exeExt}} .
+      - go build -trimpath -ldflags "{{.LDFLAGS}}" -o bin/fox{{exeExt}} .
+
+  build-lite:
+    desc: Build bin/fox-lite without ImageMagick and Ghostscript (taken from the host if installed)
+    cmds:
+      - go build -tags lite -trimpath -ldflags "{{.LDFLAGS}}" -o bin/fox-lite{{exeExt}} .
 
   release:
-    desc: Pack all tools and build bin/fox
+    desc: Build bin/fox and bin/fox-lite
     cmds:
-      - task: bundle
       - task: build
-
-  release-lite:
-    desc: Build bin/fox-lite without ImageMagick and Ghostscript (taken from the host if installed); restores the full bundle afterwards
-    cmds:
-      # Otherwise a later plain build would silently embed the lite bundle.
-      - defer: {task: bundle}
-      - task: bundle
-        vars: {EXCLUDE: 'magick,gs'}
-      - task: build
-        vars: {OUT: bin/fox-lite}
+      - task: build-lite
 
   test:
     desc: Run all tests
@@ -57,7 +51,6 @@ tasks:
       - go run . {{.CLI_ARGS}}
 
   clean:
-    desc: Remove build output, extracted tools and the packed bundle
+    desc: Remove build output and extracted tools
     cmds:
       - rm -rf bin fox-tools
-      - rm -f {{.BUNDLE}}/*.zst {{.BUNDLE}}/manifest.json

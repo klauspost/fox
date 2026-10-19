@@ -1,0 +1,17 @@
+{
+  "hash": "5d095664d0d3adb1",
+  "files": {
+    "gsdll64.dll": {
+      "size": 24191488,
+      "sha256": "882ea1cb05549e65312ac715f399e484431650c50abb5785138935814646af9c"
+    },
+    "gswin64c.exe": {
+      "size": 93696,
+      "sha256": "3741f8883c0d4ea8a75c44db982be966aeca72d966e92f1d8921cc917654d3df"
+    },
+    "magick.exe": {
+      "size": 23227024,
+      "sha256": "c706a44b8c5ff34c8754549833f81fd517c0911fdcd2f292940e7d58360378c6"
+    }
+  }
+}

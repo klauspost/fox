@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -99,5 +100,28 @@ func TestFormat(t *testing.T) {
 	}
 	if got := percent(0, 0); got != "0.0%" {
 		t.Errorf("percent of empty = %q", got)
+	}
+}
+
+func TestFit(t *testing.T) {
+	long := `e:\mp3\Isaac Howlett - Eggshell - Ghosts of the Tsunami EP (pre-order)\Isaac Howlett - Eggshell - 03 Eggshell (Radio Edit).mp3`
+	for _, tc := range []struct {
+		width, used int
+		in, want    string
+	}{
+		{0, 43, long, long},   // not a terminal
+		{200, 43, long, long}, // fits
+		{50, 43, long, long},  // too narrow to be useful
+		{80, 43, "a.png", "a.png"},
+		{100, 43, long, `e:\mp3\Isaac Howle…gshell - 03 Eggshell (Radio Edit).mp3`},
+	} {
+		p := &printer{width: tc.width}
+		got := p.fit(tc.in, tc.used)
+		if got != tc.want {
+			t.Errorf("fit(%d, %d) = %q, want %q", tc.width, tc.used, got, tc.want)
+		}
+		if tc.width > 0 && got != tc.in && utf8.RuneCountInString(got) != tc.width-tc.used-1 {
+			t.Errorf("fit(%d, %d) = %d runes, want %d", tc.width, tc.used, utf8.RuneCountInString(got), tc.width-tc.used-1)
+		}
 	}
 }

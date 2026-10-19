@@ -1,7 +1,9 @@
 // Command pack compresses the tool files listed in tools.All into internal/tools/bundle for embedding.
+// Files used only by extra tools go to bundle/extra, which the lite build leaves out; all others to bundle/core.
+// Host-only tools are skipped: their licenses forbid redistribution.
 // Existing .zst files whose content still matches the source are kept, so re-packing is cheap.
 //
-//	go run ./internal/tools/pack -src _ref/Win64/Debug/Plugins64 [-exclude magick,gs]
+//	go run ./internal/tools/pack -src _ref/Win64/Debug/Plugins64
 package main
 
 import (
@@ -26,65 +28,76 @@ import (
 	"github.com/klauspost/fox/internal/tools"
 )
 
+// maxZst keeps the committed files clear of GitHub's 100 MB per-file limit.
+var maxZst int64 = 90e6
+
+var groups = []string{"core", "extra"}
+
 func main() {
 	src := flag.String("src", "", "directory containing the tool files (required)")
 	out := flag.String("out", filepath.Join("internal", "tools", "bundle"), "bundle directory")
 	level := flag.Int("level", 19, "zstd compression level, 1-22 (files reused from an earlier pack keep their level)")
-	exclude := flag.String("exclude", "", "comma-separated tool names to leave out, e.g. magick,gs")
 	flag.Parse()
 	if *src == "" {
 		flag.Usage()
 		os.Exit(2)
 	}
-	var ex []string
-	if *exclude != "" {
-		ex = strings.Split(*exclude, ",")
-	}
-	if err := pack(*src, *out, zstd.EncoderLevelFromZstd(*level), ex); err != nil {
+	if err := pack(*src, *out, zstd.EncoderLevelFromZstd(*level)); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func pack(src, out string, level zstd.EncoderLevel, exclude []string) error {
-	for _, x := range exclude {
-		if _, ok := tools.All[x]; !ok {
-			return fmt.Errorf("-exclude: unknown tool %q", x)
-		}
-	}
-	// Files shared with an included tool (vcruntime140_1.dll) stay.
-	var names []string
+func pack(src, out string, level zstd.EncoderLevel) error {
+	// Files shared with a core tool (vcruntime140_1.dll) must be in core, or the lite build would lack them.
+	group := map[string]string{}
 	for _, t := range tools.All {
-		if slices.Contains(exclude, t.Name) {
+		if t.HostOnly() {
 			continue
 		}
 		for _, f := range t.Files {
-			if _, err := os.Stat(filepath.Join(src, f)); err != nil {
-				log.Printf("warning: %s (%s) missing: %v", f, t.Name, err)
-				continue
+			if !t.Extra() {
+				group[f] = "core"
+			} else if group[f] == "" {
+				group[f] = "extra"
 			}
-			names = append(names, f)
 		}
+	}
+	var names []string
+	for _, n := range slices.Sorted(maps.Keys(group)) {
+		if _, err := os.Stat(filepath.Join(src, n)); err != nil {
+			log.Printf("warning: %s missing: %v", n, err)
+			continue
+		}
+		names = append(names, n)
 	}
 	if len(names) == 0 {
 		// Don't replace a working bundle with an empty one because of a wrong -src.
 		return fmt.Errorf("no tool files found in %s", src)
 	}
-	slices.Sort(names)
-	names = slices.Compact(names)
 
-	if err := os.MkdirAll(out, 0o755); err != nil {
-		return err
+	for _, g := range groups {
+		dir := filepath.Join(out, g)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+		// Without a manifest the group is unused, so an interrupted pack can't produce a mismatched one.
+		if err := os.Remove(filepath.Join(dir, "manifest.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
-	// Without a manifest the bundle is unused, so an interrupted pack can't produce a mismatched one.
-	if err := os.Remove(filepath.Join(out, "manifest.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	old, _ := filepath.Glob(filepath.Join(out, "*.zst"))
+	old, _ := filepath.Glob(filepath.Join(out, "*", "*.zst"))
 	for _, f := range old {
-		if _, found := slices.BinarySearch(names, strings.TrimSuffix(filepath.Base(f), ".zst")); !found {
-			if err := os.Remove(f); err != nil {
-				return err
-			}
+		n := strings.TrimSuffix(filepath.Base(f), ".zst")
+		var err error
+		switch _, found := slices.BinarySearch(names, n); {
+		case !found:
+			err = os.Remove(f)
+		case filepath.Base(filepath.Dir(f)) != group[n]:
+			// Moved to the other group by a registry change: packFile reuses it if it still matches.
+			err = os.Rename(f, filepath.Join(out, group[n], n+".zst"))
+		}
+		if err != nil {
+			return err
 		}
 	}
 
@@ -100,26 +113,30 @@ func pack(src, out string, level zstd.EncoderLevel, exclude []string) error {
 		mu     sync.Mutex
 		wg     sync.WaitGroup
 		errs   []error
-		files  = map[string]tools.ManifestFile{}
-		comp   int64
-		reused int
+		files  = map[string]map[string]tools.ManifestFile{}
+		comp   = map[string]int64{}
+		reused = map[string]int{}
 		sem    = make(chan struct{}, runtime.NumCPU())
 	)
+	for _, g := range groups {
+		files[g] = map[string]tools.ManifestFile{}
+	}
 	for _, n := range names {
 		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			mf, csize, kept, err := packFile(filepath.Join(src, n), filepath.Join(out, n+".zst"), level)
+			g := group[n]
+			mf, csize, kept, err := packFile(filepath.Join(src, n), filepath.Join(out, g, n+".zst"), level)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", n, err))
 				return
 			}
-			files[n] = mf
-			comp += csize
+			files[g][n] = mf
+			comp[g] += csize
 			if kept {
-				reused++
+				reused[g]++
 			}
 		})
 	}
@@ -128,23 +145,25 @@ func pack(src, out string, level zstd.EncoderLevel, exclude []string) error {
 		return err
 	}
 
-	h := sha256.New()
-	for _, n := range slices.Sorted(maps.Keys(files)) {
-		fmt.Fprintf(h, "%s\x00%s\n", n, files[n].SHA256)
+	for _, g := range groups {
+		h := sha256.New()
+		for _, n := range slices.Sorted(maps.Keys(files[g])) {
+			fmt.Fprintf(h, "%s\x00%s\n", n, files[g][n].SHA256)
+		}
+		m := tools.Manifest{Hash: hex.EncodeToString(h.Sum(nil)[:8]), Files: files[g]}
+		b, err := json.MarshalIndent(m, "", "  ")
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(out, g, "manifest.json"), b, 0o644); err != nil {
+			return err
+		}
+		var raw int64
+		for _, f := range files[g] {
+			raw += f.Size
+		}
+		log.Printf("%s: packed %d files (%d reused), %.1f MB -> %.1f MB, hash %s", g, len(files[g]), reused[g], mb(raw), mb(comp[g]), m.Hash)
 	}
-	m := tools.Manifest{Hash: hex.EncodeToString(h.Sum(nil)[:8]), Files: files}
-	b, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(out, "manifest.json"), b, 0o644); err != nil {
-		return err
-	}
-	var raw int64
-	for _, f := range files {
-		raw += f.Size
-	}
-	log.Printf("packed %d files (%d reused), %.1f MB -> %.1f MB, hash %s", len(files), reused, mb(raw), mb(comp), m.Hash)
 	return nil
 }
 
@@ -153,7 +172,7 @@ func packFile(src, dst string, level zstd.EncoderLevel) (mf tools.ManifestFile, 
 	if mf, err = digestFile(src); err != nil {
 		return mf, 0, false, err
 	}
-	if have, csize, err := digestZst(dst); err == nil && have == mf {
+	if have, csize, err := digestZst(dst); err == nil && have == mf && csize <= maxZst {
 		return mf, csize, true, nil
 	}
 	in, err := os.Open(src)
@@ -165,18 +184,30 @@ func packFile(src, dst string, level zstd.EncoderLevel) (mf tools.ManifestFile, 
 	if err != nil {
 		return mf, 0, false, err
 	}
+	lw := &limitWriter{w: f, left: maxZst}
 	// Files are already compressed in parallel; one encoder goroutine each keeps memory in check.
-	enc, err := zstd.NewWriter(f, zstd.WithEncoderLevel(level), zstd.WithEncoderConcurrency(1))
-	if err != nil {
-		f.Close()
-		return mf, 0, false, err
+	enc, err := zstd.NewWriter(lw, zstd.WithEncoderLevel(level), zstd.WithEncoderConcurrency(1))
+	if err == nil {
+		_, err = io.Copy(enc, in)
+		err = errors.Join(err, enc.Close())
 	}
-	_, err = io.Copy(enc, in)
-	err = errors.Join(err, enc.Close())
-	if fi, serr := f.Stat(); serr == nil {
-		csize = fi.Size()
+	if err = errors.Join(err, f.Close()); err != nil {
+		os.Remove(dst)
 	}
-	return mf, csize, false, errors.Join(err, f.Close())
+	return mf, maxZst - lw.left, false, err
+}
+
+type limitWriter struct {
+	w    io.Writer
+	left int64
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > l.left {
+		return 0, fmt.Errorf("compressed size over %d bytes, too close to GitHub's 100 MB file limit", maxZst)
+	}
+	l.left -= int64(len(p))
+	return l.w.Write(p)
 }
 
 func digestFile(path string) (tools.ManifestFile, error) {

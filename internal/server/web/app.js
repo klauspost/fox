@@ -57,21 +57,130 @@ const splitPath = p => {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return [p.slice(0, i + 1), p.slice(i + 1)];
 };
+function duration(ns) {
+  const s = ns / 1e9;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(Math.floor(s % 60)).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
 
 /* ---------- state ---------- */
 
 const jobs = new Map();     // id -> latest engine event
 const rows = new Map();     // id -> <tr>
 const uploads = new Map();  // id -> { file, handle, root, rel, wb, err }
+// Uploads the server queued but whose job the event stream has not delivered yet; they still count as active.
+const expect = new Set();
 const canWriteBack = 'FileSystemFileHandle' in window && 'createWritable' in FileSystemFileHandle.prototype;
 
-const tbody = $('#rows');
-const pendingBody = $('#pending');
+const tbody = $('#rows');           // queued and running, running first
+const pendingBody = $('#pending');  // uploads in progress
+const doneBody = $('#done-rows');   // finished, newest first
+const FINAL = new Set(['done', 'skipped', 'failed']);
 
-function refreshEmpty() {
-  const empty = rows.size === 0 && pendingBody.children.length === 0;
-  $('#empty').hidden = !empty;
-  $('#table').hidden = empty;
+function drop(id) {
+  rows.get(id)?.remove();
+  rows.delete(id);
+  jobs.delete(id);
+  uploads.delete(id);
+  expect.delete(id);
+}
+
+/* ---------- tabs ---------- */
+
+const tabs = [...document.querySelectorAll('[role=tab]')];
+const chips = [...document.querySelectorAll('.chip')];
+const FILTER_EMPTY = { optimized: 'No optimized files.', unchanged: 'No unchanged files.', skipped: 'No skipped files.', failed: 'No failed files.' };
+const tabFromHash = () => (location.hash === '#done' ? 'done' : 'active');
+let tab = tabFromHash();
+let filter = 'all';
+let prevActive = 0;
+
+function applyTab(name) {
+  tab = name;
+  for (const b of tabs) {
+    const on = b.dataset.tab === name;
+    b.setAttribute('aria-selected', on);
+    b.tabIndex = on ? 0 : -1;
+  }
+  $('#panel').setAttribute('aria-labelledby', `tab-${name}`);
+  refreshNow();
+}
+
+const showTab = name => { if (tab !== name) location.hash = name; };
+// An empty hash is the entry the page was opened with, which shows Active.
+addEventListener('hashchange', () => { if (/^(#active|#done|)$/.test(location.hash)) applyTab(tabFromHash()); });
+// After adding files: their jobs may all have finished before the response arrived.
+const showAdded = ids => showTab(ids.every(id => FINAL.has(jobs.get(id)?.state)) ? 'done' : 'active');
+for (const b of tabs) b.addEventListener('click', () => showTab(b.dataset.tab));
+$('.tabs').addEventListener('keydown', ev => {
+  const i = tabs.findIndex(b => b.dataset.tab === tab);
+  const j = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: tabs.length - 1 }[ev.key];
+  if (j === undefined) return;
+  ev.preventDefault();
+  const b = tabs[(j + tabs.length) % tabs.length];
+  b.focus();
+  showTab(b.dataset.tab);
+});
+
+function setFilter(name) {
+  filter = doneBody.dataset.filter = name;
+  for (const c of chips) c.setAttribute('aria-pressed', c.dataset.filter === name);
+}
+for (const c of chips) c.addEventListener('click', () => { setFilter(c.dataset.filter); refreshNow(); });
+
+// The automatic switch to Done must not pull the list away from someone using it.
+const interacting = () => $('#settings').classList.contains('open') || !$('#overlay').hidden ||
+  !!document.activeElement?.closest('#panel, #path-form, .done-tools');
+
+let refreshTimer;
+function refresh() {
+  refreshTimer ??= setTimeout(refreshNow, 30);
+}
+
+function refreshNow() {
+  clearTimeout(refreshTimer);
+  refreshTimer = undefined;
+  const listed = tbody.rows.length + pendingBody.rows.length;
+  const active = listed + expect.size;
+  const n = { all: 0, optimized: 0, unchanged: 0, skipped: 0, failed: 0 };
+  for (const tr of doneBody.rows) { n.all++; n[tr.dataset.cat]++; }
+
+  // A batch just finished: show its results, unless the user is busy on the Active tab.
+  if (prevActive > 0 && active === 0 && tab === 'active' && !interacting()) {
+    prevActive = 0;
+    history.replaceState(null, '', '#done');
+    if (document.activeElement === $('#tab-active')) $('#tab-done').focus();
+    // Screen readers are not told about a tab change they did not cause.
+    $('#announce').textContent = `All files finished${n.failed ? `, ${n.failed} failed` : ''}. Showing Done.`;
+    return applyTab('done');
+  }
+  prevActive = active;
+  if (!n.all && filter !== 'all') setFilter('all');
+
+  $('#n-active').textContent = active;
+  $('#n-done').textContent = n.all;
+  $('#n-failed').textContent = n.failed;
+  $('#n-failed').hidden = !n.failed;
+  $('#tab-active').setAttribute('aria-label', `Active, ${active} file${active === 1 ? '' : 's'}`);
+  $('#tab-done').setAttribute('aria-label', `Done, ${n.all} file${n.all === 1 ? '' : 's'}${n.failed ? `, ${n.failed} failed` : ''}`);
+  for (const c of chips) {
+    c.lastElementChild.textContent = n[c.dataset.filter];
+    c.classList.toggle('zero', !n[c.dataset.filter]);
+  }
+
+  const done = tab === 'done';
+  const shown = n[filter];
+  $('#done-tools').hidden = !done;
+  $('.filters').hidden = !n.all;
+  $('#clear').disabled = !n.all;
+  $('#empty').hidden = done || listed > 0;
+  $('#done-empty').hidden = !done || shown > 0;
+  $('#done-empty-text').textContent = n.all ? FILTER_EMPTY[filter] : 'Finished files show up here.';
+  $('#table').hidden = done ? !shown : !listed;
+  tbody.hidden = pendingBody.hidden = done;
+  doneBody.hidden = !done;
 }
 
 /* ---------- rows ---------- */
@@ -86,10 +195,22 @@ function rowFor(id) {
   let tr = rows.get(id);
   if (!tr) {
     tr = skeleton();
+    tr.dataset.id = id;
     rows.set(id, tr);
-    tbody.append(tr);
   }
   return tr;
+}
+
+// place moves a row only when its state changes, so step updates neither reorder nor re-animate it.
+function place(tr, prev, e) {
+  if (FINAL.has(e.state)) {
+    tr.dataset.cat = e.state === 'done' ? (e.size < e.original ? 'optimized' : 'unchanged') : e.state;
+    if (tr.parentNode !== doneBody) doneBody.prepend(tr);
+  } else if (e.state === 'running' && prev !== 'running') {
+    tbody.insertBefore(tr, $('tr[data-state=queued]', tbody));
+  } else if (!tr.parentNode) {
+    tbody.append(tr);
+  }
 }
 
 function nameCell(full, upload) {
@@ -112,8 +233,10 @@ function render(e) {
   const tr = rowFor(e.id);
   const u = uploads.get(e.id);
   const saved = e.size < e.original;
-  const finished = e.state === 'done' || e.state === 'skipped' || e.state === 'failed';
+  const finished = FINAL.has(e.state);
+  const prev = tr.dataset.state;
   tr.dataset.state = e.state;
+  place(tr, prev, e);
   const [cName, cFmt, cOrig, cSize, cGain, cStatus, cAct] = tr.children;
 
   const shown = u?.rel ?? e.path;
@@ -162,28 +285,48 @@ function writeBackText(u) {
 
 function upsert(e) {
   jobs.set(e.id, e);
+  expect.delete(e.id);
   render(e);
   if (e.state === 'done' && uploads.has(e.id)) writeBack(e.id);
 }
 
 /* ---------- totals ---------- */
 
+// These are the server's session totals: files cleared from the list still count.
+let stats = null;
+let statsAt = 0;
+
 function renderStats(s) {
-  const saved = s.original - s.size;
+  stats = s;
+  statsAt = performance.now();
   const finished = s.done + s.skipped + s.failed;
-  $('#t-saved').textContent = bytes(saved);
+  const total = finished + s.queued + s.running;
+  $('#t-saved').textContent = bytes(s.original - s.size);
   $('#t-pct').replaceChildren(pct(s.original, s.size).toFixed(1), h('small', {}, '%'));
-  $('#t-files').replaceChildren(String(finished), h('small', {}, ` / ${s.total}`));
+  $('#t-files').replaceChildren(String(finished), h('small', {}, ` / ${total}`));
   const st = $('#t-state');
   if (s.running) st.replaceChildren(h('b', {}, `${s.running} running`), ` · ${s.queued} queued`);
   else if (s.queued) st.replaceChildren(h('b', {}, `${s.queued} queued`));
-  else if (s.total) st.replaceChildren(h('b', {}, 'Finished'), s.failed ? ` · ${s.failed} failed` : '');
+  else if (total) st.replaceChildren(h('b', {}, 'Finished'), s.failed ? ` · ${s.failed} failed` : '');
   else st.textContent = 'Idle';
-  const w = n => `${s.total ? (n / s.total) * 100 : 0}%`;
+  const w = n => `${total ? (n / total) * 100 : 0}%`;
   for (const [cls, n] of [['p-done', s.done], ['p-skip', s.skipped], ['p-fail', s.failed], ['p-run', s.running]])
     $(`.progress .${cls}`).style.setProperty('width', w(n));
-  document.title = s.running || s.queued ? `fox · ${finished}/${s.total}` : 'fox · File Optimizer X';
+  document.title = s.running || s.queued ? `fox · ${finished}/${total}` : 'fox · File Optimizer X';
+  $('#reset-stats').hidden = !finished && !s.elapsed;
+  renderTime();
 }
+
+// renderTime keeps the clock moving between events, e.g. during one long step.
+function renderTime() {
+  if (!stats) return;
+  const busy = stats.queued + stats.running > 0;
+  const ns = stats.elapsed + (busy ? (performance.now() - statsAt) * 1e6 : 0);
+  $('#t-time').textContent = ns ? `${duration(ns)} ${busy ? 'elapsed' : 'total'}` : '';
+}
+setInterval(renderTime, 1000);
+
+$('#reset-stats').addEventListener('click', () => post('api/stats/reset').catch(err => toast(err.message, true)));
 
 /* ---------- live updates ---------- */
 
@@ -193,19 +336,30 @@ function connect() {
   es.addEventListener('snapshot', ev => {
     const list = JSON.parse(ev.data);
     const keep = new Set(list.map(j => j.id));
-    for (const [id, tr] of rows) {
-      if (!keep.has(id)) { tr.remove(); rows.delete(id); jobs.delete(id); uploads.delete(id); }
-    }
+    for (const id of [...rows.keys(), ...expect]) if (!keep.has(id)) drop(id);
     for (const j of list) upsert(j);
-    refreshEmpty();
+    refresh();
     updateWriteBackButton();
   });
-  es.addEventListener('job', ev => { upsert(JSON.parse(ev.data)); refreshEmpty(); });
+  es.addEventListener('job', ev => { upsert(JSON.parse(ev.data)); refresh(); });
+  // The server evicts the oldest finished jobs once the list grows long.
+  es.addEventListener('remove', ev => {
+    for (const id of JSON.parse(ev.data)) drop(id);
+    refresh();
+    updateWriteBackButton();
+  });
   es.addEventListener('stats', ev => renderStats(JSON.parse(ev.data)));
-  es.onopen = () => { clearTimeout(offlineTimer); $('#offline').hidden = true; };
+  es.onopen = () => { clearTimeout(offlineTimer); offlineTimer = undefined; $('#offline').hidden = true; };
   es.onerror = () => {
-    clearTimeout(offlineTimer);
-    offlineTimer = setTimeout(() => { $('#offline').hidden = es.readyState === EventSource.OPEN; }, 2500);
+    // Retries (every 2s) fire onerror again; restarting the timer each time would postpone the banner forever.
+    if (offlineTimer) return;
+    offlineTimer = setTimeout(() => {
+      offlineTimer = undefined;
+      if (es.readyState === EventSource.OPEN) return;
+      // Every start uses a new port and token, so this address will never come back.
+      es.close();
+      $('#offline').hidden = false;
+    }, 2500);
   };
 }
 
@@ -216,6 +370,7 @@ async function pick(folder) {
   btns.forEach(b => (b.disabled = true));
   try {
     const { ids } = await post('api/pick', { folder });
+    if (ids.length) showAdded(ids);
     if (ids.length > 1) toast(`Added ${ids.length} files`);
   } catch (err) {
     toast(err.message, true);
@@ -235,6 +390,7 @@ $('#path-form').addEventListener('submit', async ev => {
   if (!paths.length) return;
   try {
     const { ids } = await post('api/add', { paths });
+    if (ids.length) showAdded(ids);
     toast(ids.length ? `Added ${ids.length} file${ids.length > 1 ? 's' : ''}` : 'Nothing new to add');
     input.value = '';
     input.blur();
@@ -244,7 +400,14 @@ $('#path-form').addEventListener('submit', async ev => {
 });
 
 $('#stop').addEventListener('click', () => post('api/cancel', { id: 0 }).catch(err => toast(err.message, true)));
-$('#clear').addEventListener('click', () => post('api/clear').catch(err => toast(err.message, true)));
+$('#clear').addEventListener('click', () => {
+  // Failed uploads never reached the server, so only the page knows them.
+  for (const tr of [...doneBody.rows]) if (!tr.dataset.id) tr.remove();
+  // The button is disabled once the list is empty, which would drop keyboard focus to the page.
+  $('#tab-done').focus();
+  refresh();
+  post('api/clear').catch(err => toast(err.message, true));
+});
 
 /* ---------- drag & drop ---------- */
 
@@ -261,6 +424,7 @@ addEventListener('drop', ev => {
   collect(ev.dataTransfer).then(found => {
     if (!found.length) return toast('No files found in drop', true);
     if (found.length > 1) toast(`Uploading ${found.length} files`);
+    showTab('active');
     for (const f of found) enqueueUpload(f);
   }, err => toast(err.message, true));
 });
@@ -320,7 +484,7 @@ function enqueueUpload(item) {
   cGain.append(gainCell(1, 1, false));
   cStatus.append(h('div', { class: 'status' }, h('span', {}, 'Waiting to upload')));
   pendingBody.append(tr);
-  refreshEmpty();
+  refresh();
   queue.push({ ...item, tr });
   pump();
 }
@@ -345,10 +509,12 @@ function upload(item) {
       status.textContent = `Uploading ${p.toFixed(0)}%`;
     };
     const fail = msg => {
-      item.tr.dataset.state = 'failed';
+      item.tr.dataset.state = item.tr.dataset.cat = 'failed';
       status.textContent = `Upload failed: ${msg}`;
       $('.c-act', item.tr).replaceChildren(h('span', { class: 'row-act' },
-        h('button', { type: 'button', title: 'Remove', onclick: () => { item.tr.remove(); refreshEmpty(); } }, icon(ICON.x))));
+        h('button', { type: 'button', title: 'Remove', onclick: () => { item.tr.remove(); refresh(); } }, icon(ICON.x))));
+      doneBody.prepend(item.tr);
+      refresh();
       resolve();
     };
     xhr.onload = () => {
@@ -358,7 +524,8 @@ function upload(item) {
       item.tr.remove();
       const e = jobs.get(id);
       if (e) upsert(e);
-      refreshEmpty();
+      else expect.add(id);
+      refresh();
       resolve();
     };
     xhr.onerror = () => fail('connection lost');
@@ -682,4 +849,5 @@ $('#close-settings').addEventListener('click', closeSettings);
 $('#scrim').addEventListener('click', closeSettings);
 addEventListener('keydown', ev => { if (ev.key === 'Escape' && $('#settings').classList.contains('open')) closeSettings(); });
 
+applyTab(tab);
 connect();

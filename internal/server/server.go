@@ -61,10 +61,17 @@ type server struct {
 	saving    sync.Mutex
 
 	mu        sync.Mutex
-	uploads   map[int64]string
+	uploads   map[int64]*upload
 	clients   map[*client]struct{}
 	connected bool
 	lastGone  time.Time
+
+	sess session
+}
+
+type upload struct {
+	path    string
+	fetched bool // the result was downloaded, e.g. to write it back
 }
 
 func newServer(e Engine, tools func() []toolInfo) (*server, error) {
@@ -72,14 +79,18 @@ func newServer(e Engine, tools func() []toolInfo) (*server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &server{
+	s := &server{
 		engine:    e,
 		tools:     tools,
 		token:     rand.Text(),
 		uploadDir: dir,
-		uploads:   map[int64]string{},
+		uploads:   map[int64]*upload{},
 		clients:   map[*client]struct{}{},
-	}, nil
+		sess:      session{open: map[int64]struct{}{}, evict: make(chan struct{}, 1)},
+	}
+	// Subscribed before any job exists, so every job is seen from its first event.
+	e.Subscribe(s.observe)
+	return s, nil
 }
 
 // Run serves the UI until ctx is cancelled, or until all browser tabs have been closed for a while and no jobs remain.
@@ -107,6 +118,7 @@ func Run(ctx context.Context, e Engine, openBrowser bool) error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
+	go s.evictLoop(reqCtx)
 
 	fmt.Printf("fox is running at %s\nPress Ctrl+C to quit.\n", u)
 	if openBrowser {
@@ -168,6 +180,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /api/cancel", s.cancel)
 	mux.HandleFunc("POST /api/remove", s.remove)
 	mux.HandleFunc("POST /api/clear", s.clear)
+	mux.HandleFunc("POST /api/stats/reset", s.resetStats)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("PUT /api/settings", s.putSettings)
 	mux.HandleFunc("GET /api/tools", s.listTools)

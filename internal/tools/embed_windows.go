@@ -1,3 +1,5 @@
+//go:build windows && !lite
+
 package tools
 
 import (
@@ -5,7 +7,7 @@ import (
 	"io/fs"
 )
 
-//go:embed all:bundle
+//go:embed bundle/core bundle/extra
 var embedded embed.FS
 
 var bundleFS, _ = fs.Sub(embedded, "bundle")

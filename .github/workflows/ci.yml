@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # On Windows the committed tool bundle is embedded and tested; elsewhere nothing is embedded.
+      - run: go vet ./...
+      - run: go test ./...
+      - name: Lite build
+        if: runner.os == 'Windows'
+        run: go build -tags lite ./...
+      - name: Lite bundle
+        if: runner.os == 'Windows'
+        run: go test -tags lite ./internal/tools/...
+      - name: Race detector
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: go.mod is tidy
+        run: go mod tidy -diff
