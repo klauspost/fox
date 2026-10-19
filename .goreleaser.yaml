@@ -1,0 +1,40 @@
+# Run by .github/workflows/release.yml on v* tags. Local dry run: goreleaser release --snapshot --clean
+version: 2
+
+builds:
+  - id: fox
+    binary: fox
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ['-s -w -X main.version={{.Version}}']
+    goos: [windows, linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      # The bundled tools are x64 builds; ARM64 Windows is untested.
+      - goos: windows
+        goarch: arm64
+  - id: fox-lite
+    binary: fox-lite
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    tags: [lite]
+    ldflags: ['-s -w -X main.version={{.Version}}']
+    # Only Windows embeds tools, so lite differs nowhere else.
+    goos: [windows]
+    goarch: [amd64]
+
+archives:
+  # The tools are already zstd-compressed; zipping would save nothing.
+  - formats: [binary]
+    name_template: '{{ .Binary }}{{ if ne .Os "windows" }}-{{ .Os }}-{{ .Arch }}{{ end }}'
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+
+release:
+  footer: |
+    fox is not code-signed and antivirus warnings are likely; see [Download](https://github.com/klauspost/fox#download).
+    Linux and macOS builds are experimental and bundle no tools.

@@ -17,6 +17,21 @@ If fox saves you space, please consider
 
 ![fox web UI optimizing a batch of files](img/fox-screenshot.png)
 
+## Download
+
+Download `fox.exe`, or `fox-lite.exe` (see [Platforms](#platforms)), from
+[Releases](https://github.com/klauspost/fox/releases). It is a single file with no installer. The Linux and macOS
+builds there are experimental. Releases are built by GitHub Actions from this repository, and `checksums.txt` lists
+the SHA-256 of each file.
+
+**Expect antivirus warnings.** fox is not code-signed. It is also a large executable that unpacks and runs other
+executables, which is exactly what heuristic scanners look for. SmartScreen and Defender may warn about `fox.exe` or
+the extracted tools, or quarantine them. We know this happens; build from source if you prefer.
+
+**The bundled tools are third-party programs** (see [THIRD_PARTY.md](THIRD_PARTY.md)). We select, configure and test
+them on a best-effort basis, but we did not write them and cannot take responsibility for their behaviour, bugs or
+security beyond that. fox writes files in place, so keep backups of anything you cannot afford to lose.
+
 ## Lossless by default, lossy is opt-in
 
 With default settings, the decoded content of a file never changes: images decode to the same pixels, audio and
