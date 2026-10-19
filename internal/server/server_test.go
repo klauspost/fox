@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -33,6 +34,7 @@ func TestMain(m *testing.M) {
 type fakeEngine struct {
 	mu       sync.Mutex
 	jobs     []optimize.Event
+	lastID   int64
 	subs     map[int]func(optimize.Event)
 	nsub     int
 	settings *config.Settings
@@ -49,7 +51,8 @@ func (f *fakeEngine) Add(path string, upload bool) []int64 {
 		size = st.Size()
 	}
 	f.mu.Lock()
-	e := optimize.Event{ID: int64(len(f.jobs) + 1), Path: path, State: optimize.Queued, Original: size, Size: size, Upload: upload}
+	f.lastID++
+	e := optimize.Event{ID: f.lastID, Path: path, State: optimize.Queued, Original: size, Size: size, Upload: upload}
 	f.jobs = append(f.jobs, e)
 	f.mu.Unlock()
 	f.emit(e)
@@ -155,6 +158,7 @@ func start(t *testing.T) *harness {
 	t.Cleanup(func() { os.RemoveAll(s.uploadDir) })
 	ts := httptest.NewServer(s.handler())
 	t.Cleanup(ts.Close)
+	go s.evictLoop(t.Context())
 	u, _ := url.Parse(ts.URL)
 	s.hosts = []string{u.Host, "localhost:" + u.Port()}
 	return &harness{t: t, eng: eng, srv: s, ts: ts, base: ts.URL + "/" + s.token + "/"}
@@ -417,22 +421,26 @@ func (s sse) next(t *testing.T) (string, string) {
 	}
 }
 
-func TestEvents(t *testing.T) {
-	h := start(t)
-	h.eng.Add("/x/one.png", false)
-
+func (h *harness) events() sse {
+	h.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	h.t.Cleanup(cancel)
 	req, _ := http.NewRequestWithContext(ctx, "GET", h.base+"api/events", nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		h.t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	h.t.Cleanup(func() { resp.Body.Close() })
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
-		t.Fatalf("content type %q", ct)
+		h.t.Fatalf("content type %q", ct)
 	}
-	s := sse{bufio.NewReader(resp.Body)}
+	return sse{bufio.NewReader(resp.Body)}
+}
+
+func TestEvents(t *testing.T) {
+	h := start(t)
+	h.eng.Add("/x/one.png", false)
+	s := h.events()
 
 	ev, data := s.next(t)
 	var snap []optimize.Event
@@ -457,7 +465,7 @@ func TestEvents(t *testing.T) {
 			json.Unmarshal([]byte(data), &stats)
 		}
 	}
-	if last.State != optimize.Done || stats.Original != 100 || stats.Size != 60 || stats.Total != 1 {
+	if last.State != optimize.Done || stats.Original != 100 || stats.Size != 60 || stats.Queued+stats.Running != 0 {
 		t.Errorf("last %+v stats %+v", last, stats)
 	}
 
@@ -476,7 +484,8 @@ func TestEvents(t *testing.T) {
 		}
 	}
 
-	// Removing jobs resends the snapshot, so the browser drops them.
+	// Removing jobs resends the snapshot, so the browser drops them; the totals stay,
+	// and the second final event of job 1 was not counted again.
 	h.json("POST", "api/clear", nil, nil)
 	for {
 		ev, data := s.next(t)
@@ -485,6 +494,153 @@ func TestEvents(t *testing.T) {
 				t.Errorf("snapshot after clear: %s", data)
 			}
 			break
+		}
+	}
+	if ev, data := s.next(t); ev != "stats" || json.Unmarshal([]byte(data), &stats) != nil || stats.Done != 1 || stats.Size != 60 {
+		t.Errorf("stats after clear: %s %s", ev, data)
+	}
+
+	if code := h.json("POST", "api/stats/reset", nil, nil); code != http.StatusNoContent {
+		t.Fatalf("reset: %d", code)
+	}
+	if ev, data := s.next(t); ev != "stats" || data != `{"queued":0,"running":0,"done":0,"skipped":0,"failed":0,"original":0,"size":0,"elapsed":0}` {
+		t.Errorf("stats after reset: %s %s", ev, data)
+	}
+}
+
+func TestSessionTotals(t *testing.T) {
+	h := start(t)
+	for _, p := range []string{"/a.png", "/b.png", "/c.png", "/d.png"} {
+		h.eng.Add(p, false)
+	}
+	h.eng.set(optimize.Event{ID: 1, State: optimize.Running, Original: 100, Size: 80})
+	h.eng.set(optimize.Event{ID: 1, State: optimize.Done, Original: 100, Size: 60})
+	h.eng.set(optimize.Event{ID: 1, State: optimize.Done, Original: 100, Size: 60})
+	h.eng.set(optimize.Event{ID: 2, State: optimize.Skipped, Original: 50, Size: 50})
+	h.eng.set(optimize.Event{ID: 3, State: optimize.Failed})
+	h.eng.emit(optimize.Event{ID: 99, State: optimize.Done, Original: 1000})
+	h.eng.set(optimize.Event{ID: 4, State: optimize.Running})
+	time.Sleep(20 * time.Millisecond) // Windows' monotonic clock is coarse
+
+	check := func(when string, want stats) time.Duration {
+		t.Helper()
+		got := h.srv.stats(h.eng.Jobs())
+		el := got.Elapsed
+		got.Elapsed = 0
+		if got != want {
+			t.Errorf("%s: got %+v, want %+v", when, got, want)
+		}
+		return el
+	}
+	if el := check("running", stats{Running: 1, Done: 1, Skipped: 1, Failed: 1, Original: 100, Size: 60}); el < 20*time.Millisecond {
+		t.Errorf("elapsed while busy %v", el)
+	}
+	h.json("POST", "api/remove", map[string]int64{"id": 1}, nil)
+	h.json("POST", "api/clear", nil, nil)
+	if n := len(h.eng.Jobs()); n != 1 {
+		t.Fatalf("%d jobs after clear", n)
+	}
+	check("cleared", stats{Running: 1, Done: 1, Skipped: 1, Failed: 1, Original: 100, Size: 60})
+
+	h.json("POST", "api/stats/reset", nil, nil)
+	if el := check("reset", stats{Running: 1}); el >= 20*time.Millisecond {
+		t.Errorf("elapsed not reset: %v", el)
+	}
+	time.Sleep(20 * time.Millisecond)
+	// A job running during the reset counts once it finishes.
+	h.eng.set(optimize.Event{ID: 4, State: optimize.Done, Original: 10, Size: 5})
+	el := check("after reset", stats{Done: 1, Original: 10, Size: 5})
+	if el < 20*time.Millisecond || el > time.Minute {
+		t.Errorf("elapsed after reset %v", el)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if el2 := h.srv.stats(nil).Elapsed; el2 != el {
+		t.Errorf("elapsed grew while idle: %v -> %v", el, el2)
+	}
+}
+
+func TestEvictFinished(t *testing.T) {
+	defer func(n int) { maxFinished = n }(maxFinished)
+	maxFinished = 2
+	h := start(t)
+	s := h.events()
+
+	upload := func(name string) optimize.Event {
+		ct, body := uploadBody(t, name, []byte("original-content"))
+		var res struct{ ID int64 }
+		json.NewDecoder(h.do("POST", "api/upload", ct, body).Body).Decode(&res)
+		j, _ := h.eng.Job(res.ID)
+		os.WriteFile(j.Path, []byte("small"), 0o600)
+		j.State, j.Size = optimize.Done, 5
+		h.eng.set(j)
+		return j
+	}
+	pending := upload("keep.png") // 1: never downloaded, must stay
+	got := upload("got.png")      // 2: downloaded, may go
+	// Neither delivers the whole result.
+	h.do("HEAD", "api/download/1", "", nil).Body.Close()
+	req, _ := http.NewRequest("GET", h.base+"api/download/1", nil)
+	req.Header.Set("Range", "bytes=0-1")
+	if r, err := http.DefaultClient.Do(req); err != nil || r.StatusCode != http.StatusPartialContent {
+		t.Fatalf("range download: %v %v", r, err)
+	} else {
+		io.ReadAll(r.Body)
+		r.Body.Close()
+	}
+	if r := h.do("GET", "api/download/2", "", nil); r.StatusCode != http.StatusOK {
+		t.Fatalf("download: %d", r.StatusCode)
+	} else {
+		io.ReadAll(r.Body)
+	}
+	h.eng.Add("/queued.png", false) // 3: active, never evicted
+	for i, st := range []optimize.State{optimize.Done, optimize.Skipped, optimize.Failed} {
+		id := h.eng.Add(fmt.Sprintf("/local%d.png", i), false)[0]
+		h.eng.set(optimize.Event{ID: id, State: st})
+	}
+
+	removed := map[int64]bool{}
+	for len(removed) < 3 {
+		ev, data := s.next(t)
+		if ev != "remove" {
+			continue
+		}
+		var ids []int64
+		json.Unmarshal([]byte(data), &ids)
+		for _, id := range ids {
+			removed[id] = true
+		}
+	}
+	if !removed[2] || !removed[4] || !removed[5] {
+		t.Errorf("removed %v, want 2, 4 and 5", removed)
+	}
+	var left []int64
+	for _, j := range h.eng.Jobs() {
+		left = append(left, j.ID)
+	}
+	if fmt.Sprint(left) != "[1 3 6]" {
+		t.Errorf("jobs left %v, want [1 3 6]", left)
+	}
+	if _, err := os.Stat(got.Path); !os.IsNotExist(err) {
+		t.Errorf("evicted upload not deleted: %v", err)
+	}
+	if _, err := os.Stat(pending.Path); err != nil {
+		t.Errorf("pending upload deleted: %v", err)
+	}
+	if st := h.srv.stats(nil); st.Done != 3 || st.Skipped != 1 || st.Failed != 1 {
+		t.Errorf("totals after eviction %+v", st)
+	}
+
+	// A clear recounts, so jobs finishing later do not each trigger a scan.
+	h.json("POST", "api/clear", nil, nil)
+	for end := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		h.srv.sess.mu.Lock()
+		n := h.srv.sess.finished
+		h.srv.sess.mu.Unlock()
+		if n == 0 {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatalf("finished estimate %d after clear", n)
 		}
 	}
 }

@@ -1,6 +1,4 @@
 /_ref
 /bin
 /fox-tools
-/internal/tools/bundle/*
-!/internal/tools/bundle/.gitkeep
 /.task

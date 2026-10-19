@@ -1,0 +1,3 @@
+# The tool bundle is committed zstd data; only the manifests are meant to be read and diffed.
+internal/tools/bundle/** binary
+internal/tools/bundle/*/manifest.json !binary text eol=lf diff merge

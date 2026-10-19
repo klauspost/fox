@@ -2,12 +2,15 @@
 package tools
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -25,14 +28,15 @@ type Tool struct {
 	Files []string
 	// Unix is the command to look for in PATH on other systems. Empty means the tool is never taken from PATH,
 	// on any system: either no compatible build is commonly installed, or the usual one is a different program.
+	// Host-only tools are the exception: on Windows they are looked up in PATH as Files[0].
 	Unix string
 	// URL is the project home page.
 	URL string
 }
 
-// Manifest describes the embedded bundle; it is written by the pack command.
+// Manifest describes one group of the embedded bundle, bundle/<group>/manifest.json; it is written by the pack command.
 type Manifest struct {
-	// Hash identifies the bundle contents and names the extraction directory.
+	// Hash identifies the group's contents.
 	Hash  string                  `json:"hash"`
 	Files map[string]ManifestFile `json:"files"`
 }
@@ -40,6 +44,7 @@ type Manifest struct {
 type ManifestFile struct {
 	Size   int64  `json:"size"`
 	SHA256 string `json:"sha256"`
+	group  string // directory of the .zst within the bundle
 }
 
 type result struct {
@@ -67,22 +72,38 @@ func NewResolver() *Resolver { return newResolver(bundleFS, defaultRoots()) }
 // newResolver extracts into <root>/<hash> of the first writable root.
 func newResolver(bundle fs.FS, roots []string) *Resolver {
 	r := &Resolver{bundle: bundle, cache: map[string]result{}}
-	r.manifest = sync.OnceValue(func() *Manifest {
-		b, err := fs.ReadFile(bundle, "manifest.json")
-		if err != nil {
-			return nil // development build without a packed bundle
-		}
-		var m Manifest
-		if json.Unmarshal(b, &m) != nil || m.Hash == "" {
-			return nil
-		}
-		return &m
-	})
+	r.manifest = sync.OnceValue(func() *Manifest { return loadManifest(bundle) })
 	r.dir = sync.OnceValues(func() (dir string, err error) {
 		dir, r.lock, err = pickDir(roots, r.manifest().Hash)
 		return dir, err
 	})
 	return r
+}
+
+// loadManifest merges the manifests of the embedded groups. Its Hash, which names the extraction directory, covers
+// all groups, so the full and the lite build extract to different directories.
+func loadManifest(bundle fs.FS) *Manifest {
+	paths, _ := fs.Glob(bundle, "*/manifest.json")
+	m := &Manifest{Files: map[string]ManifestFile{}}
+	h := sha256.New()
+	for _, p := range paths {
+		b, err := fs.ReadFile(bundle, p)
+		var g Manifest
+		if err != nil || json.Unmarshal(b, &g) != nil || g.Hash == "" {
+			continue // half-written by an interrupted pack
+		}
+		group := path.Dir(p)
+		fmt.Fprintln(h, group, g.Hash)
+		for name, f := range g.Files {
+			f.group = group
+			m.Files[name] = f
+		}
+	}
+	if len(m.Files) == 0 {
+		return nil // no bundle on this platform
+	}
+	m.Hash = hex.EncodeToString(h.Sum(nil)[:8])
+	return m
 }
 
 func defaultRoots() []string {
@@ -180,7 +201,7 @@ func (r *Resolver) resolve(name string, ov []string) ([]string, error) {
 }
 
 func lookPath(t Tool) (string, error) {
-	if t.Unix == "" {
+	if t.Unix == "" && (!t.HostOnly() || runtime.GOOS != "windows") {
 		return "", ErrNotFound
 	}
 	if runtime.GOOS != "windows" {

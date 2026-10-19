@@ -1,0 +1,209 @@
+{
+  "hash": "6848fab8e359077f",
+  "files": {
+    "7z.dll": {
+      "size": 1609216,
+      "sha256": "9ed007aa82e440ceb39a6e105bb1d602a9bc59a4946267ba8de2f220aa15bc06"
+    },
+    "7z.exe": {
+      "size": 446976,
+      "sha256": "c7245e21a7553d9e52d434002a401c77a7ca7d0f245f2311b0ddf16f8f946c6f"
+    },
+    "DeflOpt.exe": {
+      "size": 52736,
+      "sha256": "3500c09dececce820ec5f4b327df80f243256c5fb21146b6890ea90a6e051d90"
+    },
+    "ECT.exe": {
+      "size": 2099200,
+      "sha256": "4ff4d81950f88c2cf734a5a845c00ca3c52950f68b6588a3e803a37b03ac54b2"
+    },
+    "Leanify.exe": {
+      "size": 910336,
+      "sha256": "52f993867a23f7f9e9a34940744194e4ab43d6d1d37fd881cdd56843ac075073"
+    },
+    "PETrim.exe": {
+      "size": 133440,
+      "sha256": "6b750c1ef5654dd8ae1b9e9380d937f54a148d6ede05672e472a76e3d566c474"
+    },
+    "PngOptimizer.exe": {
+      "size": 266752,
+      "sha256": "ca05a8bc0d6120a02e38ebfe46676297f9ba124362c33f4e832818ba096c9a9e"
+    },
+    "TruePNG.exe": {
+      "size": 311296,
+      "sha256": "5fdeb5f158712cac3996195f88b2b50fcfd2525affbacd63b007847d565f1ee1"
+    },
+    "advdef.exe": {
+      "size": 962560,
+      "sha256": "3be34a89dbbab54f6d5771c00732e0d9d11f5fb88909e4ff2c983150f00fc20d"
+    },
+    "advpng.exe": {
+      "size": 947712,
+      "sha256": "65cd336b2250ba496c4f6a4fe1b53fccfdf60d03c9b4fcef1110cc546f856042"
+    },
+    "advzip.exe": {
+      "size": 967680,
+      "sha256": "bf7f228b0029d2a137fd39a0769969ab5e995c2ad4145494c915866dcdc68129"
+    },
+    "apngopt.exe": {
+      "size": 325120,
+      "sha256": "1580b919792a87c1f4424ff2fa1993473490f509a89179cc50fe1ee91e87387e"
+    },
+    "cjpegli.exe": {
+      "size": 5466112,
+      "sha256": "db564007b69b8f038eb4703fc72278c15a992aad9865fa59166735d6fd41b740"
+    },
+    "cpdf.exe": {
+      "size": 7968477,
+      "sha256": "a59aab4896d1c83f700dabeb311ad0112946390c69c941379e9f440dfecc149c"
+    },
+    "cwebp.exe": {
+      "size": 1552384,
+      "sha256": "69ba4a6ef6c4848da88b318d186e2bf9d8d54b7970c75713de1760da4bbb530d"
+    },
+    "defluff.exe": {
+      "size": 31744,
+      "sha256": "24efa335fc73e39f23afa7f35650e01ae6727a28ac806f5086ca7f25edd73448"
+    },
+    "ffmpeg.exe": {
+      "size": 98730496,
+      "sha256": "1fcb0cb525085cc5be3ad4be16799d60786b65cc36951622a018d00f78c0fb5d"
+    },
+    "flac.exe": {
+      "size": 339456,
+      "sha256": "ff23d9cbc11d18c02f262c3ee455830ea13fbe8d9876249f0bdf101e3ad66709"
+    },
+    "flacout.exe": {
+      "size": 29184,
+      "sha256": "dcf9947af4651f61ab6280fbdadd2784a87934680efb5d9a8397236e792f5621"
+    },
+    "gifsicle.exe": {
+      "size": 335808,
+      "sha256": "061d368541f422f8169291f36145630590a36236bdd28d3eb184e34b0d0f423a"
+    },
+    "guetzli.exe": {
+      "size": 2390528,
+      "sha256": "de790c997727cf06e2d671d6bca0a9f00b5563b34d0e81751b1797698721246f"
+    },
+    "gzip.exe": {
+      "size": 92174,
+      "sha256": "4e7dcbc41d12e56f1dd8ca07973104ffd0725372848616aaf98fcb357b0e9b77"
+    },
+    "imagew.exe": {
+      "size": 1254400,
+      "sha256": "23ab15754b408637a64124429ef7953d33976ae190724f6f9bd07e487a61c0f7"
+    },
+    "jhead.exe": {
+      "size": 168448,
+      "sha256": "47d819ae4785dd89d8f6739a3de0f20448e148a12394c83c9abf78c07d279850"
+    },
+    "jpeg-recompress.exe": {
+      "size": 672034,
+      "sha256": "c963f85625799a34219f0a796ef0f5fd96423e637acd90020ac5fe8b15b3f9e4"
+    },
+    "jpegoptim.exe": {
+      "size": 955904,
+      "sha256": "0a79681b56961ec2c5f45c4f9dff01a64e7274b4f3250c22cde5f09c0bb457f3"
+    },
+    "jpegtran.exe": {
+      "size": 155648,
+      "sha256": "9767f05ae1b59d4fea25a73b276dcd1245f5281b53386dc03784539265bffbea"
+    },
+    "libFLAC.dll": {
+      "size": 522240,
+      "sha256": "f93499172875fc2c0df80b57086f32e3f39e835283952ee2a59a3d4ffb097644"
+    },
+    "m7zRepacker.exe": {
+      "size": 911360,
+      "sha256": "4a8a47b11c1e9d3ac726bcf6107c4a410cdbc1ed8b192c459a01cef066abcd4e"
+    },
+    "m7zRepacker.ini": {
+      "size": 460,
+      "sha256": "0e7b1fc0bd22b20fc842e8bbfd208d0d75b78b605760b9a5d5c555f517041999"
+    },
+    "minify.exe": {
+      "size": 4588032,
+      "sha256": "7e0e8f41bc99d93dfb0f1ddfbcd31e87a711a459dbea38c22a579c8e2eefb108"
+    },
+    "mkclean.exe": {
+      "size": 260096,
+      "sha256": "2553fe3cf7941ad9ecffb8865d938925f02bdc1038cfbd2139556b5d4e195d73"
+    },
+    "mozjpegtran.exe": {
+      "size": 676864,
+      "sha256": "0107f10eb2622fa70720225b69135ea756112c2229579aa1824d2984ada8fc3d"
+    },
+    "mp3packer.exe": {
+      "size": 1264640,
+      "sha256": "2a542d4145211fe02809408acca668b960b6728d735f206fa315c7107ebfd7fa"
+    },
+    "mp4file.exe": {
+      "size": 1750528,
+      "sha256": "1d26cc3540961bac5b4432c833865f20196b385e0e22ec82e7bca777f068a78d"
+    },
+    "mutool.exe": {
+      "size": 45086720,
+      "sha256": "17fd65b4e677982d8e52601e805e4794952b9b89e0a3c5d4673383d1cd6d0052"
+    },
+    "optivorbis.exe": {
+      "size": 358912,
+      "sha256": "af8f318d057231164c5cf454e67795a81ea48c7ee9043bc42a5bdb33e2224f3b"
+    },
+    "oxipng.exe": {
+      "size": 1127424,
+      "sha256": "421ce9013342db4a2d9ee6c595adc673d4fe0c69bb0b5c6b9a8794c83226093d"
+    },
+    "pngout.exe": {
+      "size": 62976,
+      "sha256": "afaa54d14f8222a30771a0ee5212acf242afef53691006665fe0dcd4208cff55"
+    },
+    "pngquant.exe": {
+      "size": 743424,
+      "sha256": "7aadad6a50aa5c40cfcb20f9478c92f6030360a3424bc262ce383dc1e97fb86a"
+    },
+    "pngrewrite.exe": {
+      "size": 241152,
+      "sha256": "fb194731531f81a9a4e5aaa2e7bec5aac08e740e9e57fb401a738baf8cbc690c"
+    },
+    "pngwolf.exe": {
+      "size": 276480,
+      "sha256": "2de31254779dc5beeb663338ca027bf638bf522de15c32727aa41269a2dbb797"
+    },
+    "qpdf.exe": {
+      "size": 19456,
+      "sha256": "0e3f88691dae68291cd025cf6f5dfab6e19e0c9d48135c4130025cc3b69d3a2d"
+    },
+    "qpdf30.dll": {
+      "size": 6906368,
+      "sha256": "41a3c881e8223dbe914f0d404a84c67525544992d2915025aa46ab9e34e88190"
+    },
+    "rehuff_theora.exe": {
+      "size": 440320,
+      "sha256": "774bb702df3778c66d04393255492be65255f524cdae3e1fb4a701c00778176b"
+    },
+    "shntool.exe": {
+      "size": 214016,
+      "sha256": "7fe6a21a5037927fdedff961427e84c540e929932ce3ee614113f68339919314"
+    },
+    "sqlite3.exe": {
+      "size": 1647616,
+      "sha256": "446c6b3c27647a4fe7aaae52e67ffad3b59c4b8dc10639b64f1606afc5421ec7"
+    },
+    "strip.exe": {
+      "size": 1023488,
+      "sha256": "1571d6f560a4833f3bfb8e566da59c564b3c4769e6fd8348696d9ae93c50ce30"
+    },
+    "upx.exe": {
+      "size": 629248,
+      "sha256": "f4c0cc7aca0f1ff0d0b750e966b44139f2fa1a2db7281f48fc52194400712e1d"
+    },
+    "vcruntime140_1.dll": {
+      "size": 37256,
+      "sha256": "6c1e531c25ab2934a4ea9970598bc751d924d7cc5650df3e1282b61d6cd24f42"
+    },
+    "zRecompress.exe": {
+      "size": 233984,
+      "sha256": "6915c88c315779ce53b0c7e674716f3fc16b5e4758938359df24d6e88efc6950"
+    }
+  }
+}

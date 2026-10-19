@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ func (r *Resolver) extract(t Tool) (string, error) {
 	}
 	m := r.manifest()
 	for _, f := range t.Files {
-		if err := r.extractFile(dir, f, m.Files[f].Size); err != nil {
+		if err := r.extractFile(dir, f, m.Files[f]); err != nil {
 			return "", err
 		}
 	}
@@ -30,16 +31,16 @@ func (r *Resolver) extract(t Tool) (string, error) {
 
 // extractFile is safe against concurrent goroutines (per-file lock) and concurrent fox processes
 // (decompress to a unique temp name, then rename).
-func (r *Resolver) extractFile(dir, name string, size int64) error {
+func (r *Resolver) extractFile(dir, name string, mf ManifestFile) error {
 	l, _ := r.locks.LoadOrStore(name, new(sync.Mutex))
 	l.(*sync.Mutex).Lock()
 	defer l.(*sync.Mutex).Unlock()
 
 	dst := filepath.Join(dir, name)
-	if sameSize(dst, size) {
+	if sameSize(dst, mf.Size) {
 		return nil
 	}
-	src, err := r.bundle.Open(name + ".zst")
+	src, err := r.bundle.Open(path.Join(mf.group, name+".zst"))
 	if err != nil {
 		return err
 	}
@@ -56,8 +57,8 @@ func (r *Resolver) extractFile(dir, name string, size int64) error {
 	}
 	n, err := io.Copy(tmp, dec)
 	err = errors.Join(err, tmp.Chmod(0o755), tmp.Close())
-	if err == nil && n != size {
-		err = fmt.Errorf("%s: extracted %d bytes, want %d", name, n, size)
+	if err == nil && n != mf.Size {
+		err = fmt.Errorf("%s: extracted %d bytes, want %d", name, n, mf.Size)
 	}
 	if err == nil {
 		err = os.Rename(tmp.Name(), dst)
@@ -65,7 +66,7 @@ func (r *Resolver) extractFile(dir, name string, size int64) error {
 	if err != nil {
 		os.Remove(tmp.Name())
 		// Windows refuses to replace a file that is running or being renamed; another process got there first.
-		if sameSize(dst, size) {
+		if sameSize(dst, mf.Size) {
 			return nil
 		}
 	}

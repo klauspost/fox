@@ -1,5 +1,21 @@
 package tools
 
+import "slices"
+
+// extraTools are bundled in bundle/extra, which the lite build (build tag "lite") leaves out: they are large and
+// commonly installed, so fox-lite takes them from the host.
+var extraTools = []string{"magick", "gs"}
+
+// Extra reports whether t is only bundled in the full build.
+func (t Tool) Extra() bool { return slices.Contains(extraTools, t.Name) }
+
+// hostTools are never bundled because their licenses forbid redistribution. fox uses them only when installed by the
+// user: from PATH on Windows (under Files[0]), or through settings.toolPaths.
+var hostTools = []string{"pingo"}
+
+// HostOnly reports whether t is never bundled.
+func (t Tool) HostOnly() bool { return slices.Contains(hostTools, t.Name) }
+
 // All lists every known tool, keyed by Name.
 //
 // Extra Files were found by inspecting PE imports and embedded strings: vcruntime140_1.dll is imported by

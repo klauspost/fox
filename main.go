@@ -15,11 +15,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/klauspost/fox/internal/config"
 	"github.com/klauspost/fox/internal/optimize"
 	"github.com/klauspost/fox/internal/server"
 	"github.com/klauspost/fox/internal/tools"
+	"golang.org/x/term"
 )
 
 var version = "dev"
@@ -205,12 +207,33 @@ type printer struct {
 	mu      sync.Mutex
 	verbose bool
 	cwd     string
+	width   int // terminal columns; 0 when not a terminal
 	steps   map[int64]string
 }
 
 func newPrinter(verbose bool) *printer {
 	cwd, _ := os.Getwd()
-	return &printer{verbose: verbose, cwd: cwd, steps: map[int64]string{}}
+	// Piped output keeps full paths for scripts.
+	w, _, _ := term.GetSize(int(os.Stdout.Fd()))
+	return &printer{verbose: verbose, cwd: cwd, width: w, steps: map[int64]string{}}
+}
+
+// fit shortens name in the middle, so a line with used columns before it doesn't wrap.
+func (p *printer) fit(name string, used int) string {
+	r := []rune(name)
+	room := p.width - used - 1
+	if p.width <= 0 || len(r) <= room || room < 16 {
+		return name
+	}
+	// The file name is at the end and matters most.
+	tail := room * 2 / 3
+	return string(r[:room-1-tail]) + "…" + string(r[len(r)-tail:])
+}
+
+// status prints "label  name: msg", fitting name next to the first line of msg.
+func (p *printer) status(label, name, msg string) {
+	first, _, _ := strings.Cut(msg, "\n")
+	fmt.Printf("%8s  %s: %s\n", label, p.fit(name, 12+utf8.RuneCountInString(first)), msg)
 }
 
 func (p *printer) event(ev optimize.Event) {
@@ -222,18 +245,18 @@ func (p *printer) event(ev optimize.Event) {
 		// Size updates repeat the current step; print each step once.
 		if p.verbose && ev.Step != "" && p.steps[ev.ID] != ev.Step {
 			p.steps[ev.ID] = ev.Step
-			fmt.Printf("%8s  %s: %s\n", "·", name, ev.Step)
+			p.status("·", name, ev.Step)
 		}
 	case optimize.Done:
 		delete(p.steps, ev.ID)
-		fmt.Printf("%8s  %10s → %10s  %6s  %s\n", percent(ev.Original, ev.Size), size(ev.Original), size(ev.Size), elapsed(ev.Elapsed), name)
+		fmt.Printf("%8s  %10s → %10s  %6s  %s\n", percent(ev.Original, ev.Size), size(ev.Original), size(ev.Size), elapsed(ev.Elapsed), p.fit(name, 43))
 		if p.verbose && ev.Message != "" {
-			fmt.Printf("%8s  %s: %s\n", "note", name, ev.Message)
+			p.status("note", name, ev.Message)
 		}
 	case optimize.Skipped:
 		delete(p.steps, ev.ID)
 		if p.verbose {
-			fmt.Printf("%8s  %s: %s\n", "skipped", name, ev.Message)
+			p.status("skipped", name, ev.Message)
 		}
 	case optimize.Failed:
 		delete(p.steps, ev.ID)
@@ -242,7 +265,7 @@ func (p *printer) event(ev optimize.Event) {
 			// Messages can carry kilobytes of tool output.
 			msg, _, _ = strings.Cut(strings.TrimSpace(msg), "\n")
 		}
-		fmt.Printf("%8s  %s: %s\n", "FAILED", name, msg)
+		p.status("FAILED", name, msg)
 	}
 }
 

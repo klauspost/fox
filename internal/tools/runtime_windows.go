@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,10 +19,7 @@ const vcRedistURL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
 
 // Replaced in tests, which must never download or run the real installer.
 var (
-	hasBundle = func() bool {
-		_, err := fs.Stat(bundleFS, "manifest.json")
-		return err == nil
-	}
+	hasBundle   = func() bool { return loadManifest(bundleFS) != nil }
 	vcInstalled = vcRuntimeInstalled
 	vcDownload  = download
 	vcInstall   = func(ctx context.Context, exe string) (uint32, error) {

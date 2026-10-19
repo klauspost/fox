@@ -171,14 +171,14 @@ func (s *server) store(name string, r io.Reader) (int64, error) {
 		os.RemoveAll(dir)
 		return 0, errors.New("upload could not be queued")
 	}
-	s.uploads[ids[0]] = p
+	s.uploads[ids[0]] = &upload{path: p}
 	return ids[0], nil
 }
 
 func (s *server) download(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	s.mu.Lock()
-	p, ok := s.uploads[id]
+	u, ok := s.uploads[id]
 	s.mu.Unlock()
 	if !ok {
 		http.NotFound(w, r)
@@ -188,7 +188,7 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not finished", http.StatusConflict)
 		return
 	}
-	f, err := os.Open(p)
+	f, err := os.Open(u.path)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -200,8 +200,14 @@ func (s *server) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(p)}))
+	w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": filepath.Base(u.path)}))
 	http.ServeContent(w, r, "", st.ModTime(), f)
+	// HEAD and range requests do not deliver the whole result, so eviction must keep it.
+	if r.Method == http.MethodGet && r.Header.Get("Range") == "" && r.Context().Err() == nil {
+		s.mu.Lock()
+		u.fetched = true
+		s.mu.Unlock()
+	}
 }
 
 func readID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -233,18 +239,21 @@ func (s *server) clear(w http.ResponseWriter, r *http.Request) {
 // forget removes finished jobs (all if id is 0) and the upload files the engine no longer knows about.
 func (s *server) forget(id int64) {
 	s.engine.Remove(id)
+	s.dropUploads()
+	s.resyncClients()
+	// Otherwise the stale count makes every job finishing later rescan the list.
+	s.sess.signal()
+}
+
+func (s *server) dropUploads() {
 	s.mu.Lock()
-	for jid, p := range s.uploads {
-		if id != 0 && jid != id {
-			continue
-		}
-		if _, ok := s.engine.Job(jid); !ok {
-			os.RemoveAll(filepath.Dir(p))
-			delete(s.uploads, jid)
+	defer s.mu.Unlock()
+	for id, u := range s.uploads {
+		if _, ok := s.engine.Job(id); !ok {
+			os.RemoveAll(filepath.Dir(u.path))
+			delete(s.uploads, id)
 		}
 	}
-	s.mu.Unlock()
-	s.resyncClients()
 }
 
 func (s *server) getSettings(w http.ResponseWriter, r *http.Request) {

@@ -2,13 +2,17 @@ package tools
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/rand/v2"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -23,21 +27,32 @@ import (
 
 const testHash = "0123456789abcdef"
 
+// fakeBundle returns a bundle with files in its core group.
 func fakeBundle(t *testing.T, files map[string][]byte) fstest.MapFS {
+	t.Helper()
+	fsys := fstest.MapFS{}
+	addGroup(t, fsys, "core", testHash, files)
+	return fsys
+}
+
+func addGroup(t *testing.T, fsys fstest.MapFS, group, hash string, files map[string][]byte) {
 	t.Helper()
 	enc, err := zstd.NewWriter(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fsys := fstest.MapFS{}
-	m := Manifest{Hash: testHash, Files: map[string]ManifestFile{}}
+	m := Manifest{Hash: hash, Files: map[string]ManifestFile{}}
 	for name, b := range files {
-		fsys[name+".zst"] = &fstest.MapFile{Data: enc.EncodeAll(b, nil)}
+		fsys[group+"/"+name+".zst"] = &fstest.MapFile{Data: enc.EncodeAll(b, nil)}
 		m.Files[name] = ManifestFile{Size: int64(len(b))}
 	}
 	b, _ := json.Marshal(m)
-	fsys["manifest.json"] = &fstest.MapFile{Data: b}
-	return fsys
+	fsys[group+"/manifest.json"] = &fstest.MapFile{Data: b}
+}
+
+// testDir returns the extraction directory of every fakeBundle: it only depends on the group hashes.
+func testDir(t *testing.T) string {
+	return loadManifest(fakeBundle(t, map[string][]byte{"x": nil})).Hash
 }
 
 func randBytes(n int) []byte {
@@ -78,7 +93,7 @@ func TestResolutionOrder(t *testing.T) {
 	}
 
 	r.SetOverrides(nil)
-	want := filepath.Join(root, testHash, "oxipng.exe")
+	want := filepath.Join(root, testDir(t), "oxipng.exe")
 	got, err := r.Command("oxipng")
 	if err != nil || !slices.Equal(got, []string{want}) {
 		t.Fatalf("bundle: got %q, %v; want %q", got, err, want)
@@ -131,6 +146,28 @@ func TestNoPathWithoutUnixName(t *testing.T) {
 	}
 	if r.Available("gzip") {
 		t.Fatal("gzip available from PATH")
+	}
+}
+
+// pingo may not be redistributed: only a copy the user installed counts, which needs a Windows build.
+func TestHostOnly(t *testing.T) {
+	dir := t.TempDir()
+	for _, f := range []string{"pingo", "pingo.exe"} {
+		os.WriteFile(filepath.Join(dir, f), nil, 0o755)
+	}
+	t.Setenv("PATH", dir)
+	r := testResolver(t, fstest.MapFS{}, []string{t.TempDir()})
+	want := runtime.GOOS == "windows"
+	if argv, err := r.Command("pingo"); (err == nil) != want || r.Available("pingo") != want {
+		t.Fatalf("pingo from PATH: %q, %v; want found = %v", argv, err, want)
+	}
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetOverrides(map[string][]string{"pingo": {self}})
+	if argv, err := r.Command("pingo"); err != nil || argv[0] != self {
+		t.Fatalf("override: got %q, %v", argv, err)
 	}
 }
 
@@ -198,7 +235,7 @@ func TestExtractConcurrent(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	dir := filepath.Join(root, testHash)
+	dir := filepath.Join(root, testDir(t))
 	for name, want := range files {
 		if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || !bytes.Equal(got, want) {
 			t.Errorf("%s: content mismatch (%v)", name, err)
@@ -212,7 +249,7 @@ func TestExtractConcurrent(t *testing.T) {
 
 func TestReuseBySize(t *testing.T) {
 	root := t.TempDir()
-	dir := filepath.Join(root, testHash)
+	dir := filepath.Join(root, testDir(t))
 	os.MkdirAll(dir, 0o755)
 	os.WriteFile(filepath.Join(dir, "oxipng.exe"), []byte("SAMESIZE"), 0o755)
 	os.WriteFile(filepath.Join(dir, "pngout.exe"), []byte("old"), 0o755)
@@ -244,7 +281,7 @@ func TestStaleCleanupAndFallback(t *testing.T) {
 	os.WriteFile(filepath.Join(stale, "old.exe"), []byte("x"), 0o644)
 	other := filepath.Join(root, "not-a-hash")
 	os.MkdirAll(other, 0o755)
-	cur := filepath.Join(root, testHash)
+	cur := filepath.Join(root, testDir(t))
 	os.MkdirAll(cur, 0o755)
 	oldTmp, newTmp := filepath.Join(cur, "mutool.exe.1.tmp"), filepath.Join(cur, "mutool.exe.2.tmp")
 	os.WriteFile(oldTmp, nil, 0o644)
@@ -256,7 +293,7 @@ func TestStaleCleanupAndFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := filepath.Join(root, testHash, "oxipng.exe"); argv[0] != want {
+	if want := filepath.Join(root, testDir(t), "oxipng.exe"); argv[0] != want {
 		t.Errorf("got %q, want fallback %q", argv[0], want)
 	}
 	if _, err := os.Stat(stale); !errors.Is(err, fs.ErrNotExist) {
@@ -292,10 +329,10 @@ func TestRegistry(t *testing.T) {
 	}
 }
 
-// TestRealBundle checks the embedded bundle, when one has been packed.
+// TestRealBundle runs tools from the embedded bundle.
 func TestRealBundle(t *testing.T) {
-	if _, err := fs.Stat(bundleFS, "manifest.json"); err != nil {
-		t.Skip("no packed bundle; run `go tool task bundle`")
+	if loadManifest(bundleFS) == nil {
+		t.Skip("no bundle on " + runtime.GOOS)
 	}
 	root := t.TempDir()
 	r := testResolver(t, bundleFS, []string{root})
@@ -309,6 +346,9 @@ func TestRealBundle(t *testing.T) {
 	}
 	t.Logf("%s", bytes.TrimSpace(out))
 
+	if !r.bundled(All["gs"]) {
+		return // lite build
+	}
 	argv, err = r.Command("gs")
 	if err != nil {
 		t.Fatal(err)
@@ -325,16 +365,122 @@ func TestRealBundle(t *testing.T) {
 	t.Logf("gs %s", bytes.TrimSpace(out))
 }
 
-// TestStaleKeepsInUse stands in for fox and fox-lite (different bundle hashes) sharing fox-tools.
+// TestBundleIntegrity checks the embedded bundle against its manifests.
+func TestBundleIntegrity(t *testing.T) {
+	m := loadManifest(bundleFS)
+	if m == nil {
+		t.Skip("no bundle on " + runtime.GOOS)
+	}
+	r := testResolver(t, bundleFS, nil)
+	full := r.bundled(All["gs"])
+	for _, tool := range All {
+		if want := !tool.HostOnly() && (full || !tool.Extra()); r.bundled(tool) != want {
+			t.Errorf("%s: bundled = %v, want %v (build with extra tools = %v)", tool.Name, r.bundled(tool), want, full)
+		}
+	}
+	zsts, _ := fs.Glob(bundleFS, "*/*.zst")
+	if len(zsts) != len(m.Files) {
+		t.Errorf("%d .zst files for %d manifest entries", len(zsts), len(m.Files))
+	}
+	if testing.Short() {
+		t.Skip("decompressing the bundle")
+	}
+	for name, f := range m.Files {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			zf, err := bundleFS.Open(path.Join(f.group, name+".zst"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer zf.Close()
+			dec, err := zstd.NewReader(zf, zstd.WithDecoderConcurrency(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer dec.Close()
+			h := sha256.New()
+			n, err := io.Copy(h, dec)
+			if sum := hex.EncodeToString(h.Sum(nil)); err != nil || n != f.Size || sum != f.SHA256 {
+				t.Errorf("got %d bytes, sha256 %s, %v; manifest has %d bytes, sha256 %s", n, sum, err, f.Size, f.SHA256)
+			}
+		})
+	}
+}
+
+// TestBundleGroups checks the committed manifests against the registry, whichever groups this build embeds.
+func TestBundleGroups(t *testing.T) {
+	m := loadManifest(os.DirFS("bundle"))
+	if m == nil {
+		t.Fatal("no manifests in bundle/")
+	}
+	n := 0
+	for _, g := range []string{"core", "extra"} {
+		b, err := os.ReadFile(filepath.Join("bundle", g, "manifest.json"))
+		var gm Manifest
+		if err != nil || json.Unmarshal(b, &gm) != nil {
+			t.Fatalf("%s: %v", g, err)
+		}
+		n += len(gm.Files)
+	}
+	if n != len(m.Files) {
+		t.Errorf("%d files are in both groups", n-len(m.Files))
+	}
+	for _, tool := range All {
+		for _, f := range tool.Files {
+			if _, ok := m.Files[f]; !ok && !tool.HostOnly() {
+				t.Errorf("%s: %s not bundled", tool.Name, f)
+			}
+		}
+	}
+	// A file belongs to extra exactly when only extra tools use it: anything else would be missing from or bloat the lite build.
+	// Files of host-only tools have no users here, so they must not be bundled at all.
+	for name, f := range m.Files {
+		users, extra := 0, true
+		for _, tool := range All {
+			if slices.Contains(tool.Files, name) && !tool.HostOnly() {
+				users++
+				extra = extra && tool.Extra()
+			}
+		}
+		want := "core"
+		if extra {
+			want = "extra"
+		}
+		if users == 0 || f.group != want {
+			t.Errorf("%s: in %s, used by %d tools, want %s", name, f.group, users, want)
+		}
+	}
+}
+
+func TestGroups(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	bundle := fakeBundle(t, map[string][]byte{"oxipng.exe": []byte("core")})
+	addGroup(t, bundle, "extra", "fedcba9876543210", map[string][]byte{"magick.exe": []byte("extra")})
+	root := t.TempDir()
+	r := testResolver(t, bundle, []string{root})
+	for tool, want := range map[string]string{"oxipng": "core", "magick": "extra"} {
+		argv, err := r.Command(tool)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if b, _ := os.ReadFile(argv[0]); string(b) != want || filepath.Dir(argv[0]) == filepath.Join(root, testDir(t)) {
+			t.Errorf("%s: got %q in %s; want %q outside the core-only directory", tool, b, argv[0], want)
+		}
+	}
+	if r := testResolver(t, fakeBundle(t, nil), []string{t.TempDir()}); r.Available("magick") {
+		t.Error("magick available without the extra group")
+	}
+}
+
+// TestStaleKeepsInUse stands in for fox-lite and fox (same core, plus extra) sharing fox-tools.
 func TestStaleKeepsInUse(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("bundles are Windows only")
 	}
 	root := t.TempDir()
-	lite := fakeBundle(t, map[string][]byte{"oxipng.exe": []byte("lite")})
-	b, _ := json.Marshal(Manifest{Hash: "fedcba9876543210", Files: map[string]ManifestFile{"oxipng.exe": {Size: 4}}})
-	lite["manifest.json"] = &fstest.MapFile{Data: b}
-	full := fakeBundle(t, map[string][]byte{"oxipng.exe": []byte("full")})
+	core := map[string][]byte{"oxipng.exe": []byte("core")}
+	lite, full := fakeBundle(t, core), fakeBundle(t, core)
+	addGroup(t, full, "extra", "fedcba9876543210", map[string][]byte{"magick.exe": []byte("extra")})
 
 	r1 := testResolver(t, lite, []string{root})
 	argv, err := r1.Command("oxipng")

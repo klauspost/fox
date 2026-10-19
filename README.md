@@ -4,10 +4,18 @@ fox makes files smaller without changing what they contain. It runs a chain of e
 (oxipng, ECT, Leanify, jpegtran, gifsicle, qpdf, ffmpeg, …) over each file and keeps a result only if it is smaller.
 Several files are processed at once, one per physical CPU core by default. It has a command line and a local web UI.
 
+| Platform | Status |
+|---|---|
+| **Windows x64** | Supported. One `fox.exe` with every tool bundled except pingo, which is used if you install it. This is what fox is developed and tested on (Windows 11). |
+| **Linux, macOS** | Experimental, untested end to end. fox builds and runs, but no tools are bundled: install them yourself. Nine tools are Windows-only and need Wine, so expect smaller savings. See [Platforms](#platforms). |
+| **Windows ARM64** | Untested. The bundled tools are x64 builds. |
+
 fox is a Go rewrite of [FileOptimizer](https://nikkhokkho.sourceforge.io/static.php?page=FileOptimizer) by
 **Javier Gutiérrez Chamorro**. His years of work picking and tuning these tools is what fox is built on.
 If fox saves you space, please consider
 **[donating to him](https://nikkhokkho.sourceforge.io/images/FileOptimizerDonate.html)**.
+
+![fox web UI optimizing a batch of files](img/fox-screenshot.png)
 
 ## Lossless by default, lossy is opt-in
 
@@ -39,15 +47,7 @@ Files are optimized **in place**. Wildcards such as `*.png` are expanded by fox 
 Windows), so they also work in `cmd.exe` and PowerShell. Flags may come before or after the files; `--` ends the
 flags.
 
-```
-$ fox -level 3 photos logo.png fox.svg
-   -4.2%       334 B →      320 B    0.1s  fox.svg
-  -21.7%   242.56 KB →  189.91 KB    0.6s  photos\logo.jpg
-  -33.5%    28.94 KB →   19.24 KB   12.9s  logo.png
-    0.0%    22.34 KB →   22.34 KB   15.8s  photos\screen.png
-
-4 done, 0 skipped, 0 failed. Saved 62.37 KB of 294.17 KB (21.2%) in 15.8s.
-```
+![fox optimizing a folder of MP3s and cover art from the command line](img/fox-cmdline.png)
 
 | Flag             | Effect                                                                     |
 |------------------|----------------------------------------------------------------------------|
@@ -82,6 +82,13 @@ your browser. The URL is also printed, so you can paste it if the browser does n
 - **Drag and drop** uploads the files to fox, which optimizes the copies. In browsers with the File System Access
   API (Chrome, Edge) fox writes the result back over the dropped original after you grant write access, unless the
   original changed since the drop. Otherwise each result is offered as a download. Dropped folders work too.
+- Files are listed on two tabs: **Active** (running, then queued) and **Done** (newest first, filterable by
+  optimized, unchanged, skipped and failed). When a batch finishes the page switches to Done, unless you are
+  typing a path or using the list.
+- The totals at the top count every file since fox started. Clearing or removing files from the list keeps them;
+  **Reset** sets them to zero.
+- Done keeps the 1000 most recent finished files and drops older ones. A dropped file whose optimized result has
+  not been downloaded or written back yet is kept until it has been.
 - All settings are in the settings panel and saved to the settings file immediately.
 
 The server exits on Ctrl+C, or once the browser tab has been closed for 30 seconds and no jobs are left.
@@ -99,11 +106,11 @@ smaller. *lossy*: only with lossy enabled for the format. *strip*: only when met
 
 | Format | Extensions | Tools |
 |---|---|---|
-| JPEG | .jpg .jpeg .jpe .jfif .jfi .jif | pingo *(strip)*, cjpegli *(lossy, strip)*, guetzli *(lossy, strip)*, jpeg-recompress *(lossy)*, jhead *(strip, not CMYK)*, Leanify, ImageMagick *(lossy)*, jpegoptim, jpegtran, mozjpegtran, ECT |
-| PNG / APNG | .png .apng | apngopt *(APNG)*, pngquant *(lossy, strip)*, PngOptimizer *(strip)*, TruePNG, PNGOUT, oxipng, Leanify *(strip)*, pngwolf, pngrewrite *(strip)*, advpng *(strip)*, ECT, pingo, DeflOpt, defluff |
+| JPEG | .jpg .jpeg .jpe .jfif .jfi .jif | pingo ⁴ *(strip)*, cjpegli *(lossy, strip)*, guetzli *(lossy, strip)*, jpeg-recompress *(lossy)*, jhead *(strip, not CMYK)*, Leanify, ImageMagick *(lossy)*, jpegoptim, jpegtran, mozjpegtran, ECT |
+| PNG / APNG | .png .apng | apngopt *(APNG)*, pngquant *(lossy, strip)*, PngOptimizer *(strip)*, TruePNG, PNGOUT, oxipng, Leanify *(strip)*, pngwolf, pngrewrite *(strip)*, advpng *(strip)*, ECT, pingo ⁴, DeflOpt, defluff |
 | ICO / CUR | .ico .cur | Leanify *(strip, uses `png.keepMetadata`)* |
 | GIF | .gif | ImageMagick *(lossy)*, gifsicle |
-| WebP | .webp | pingo, cwebp |
+| WebP | .webp | pingo ⁴, cwebp |
 | BMP | .bmp .dib | ImageMagick, ImageWorsener *(not colour-managed)* |
 | TIFF | .tif .tiff | ImageMagick *(strip)* |
 | SVG | .svg | Leanify, minify |
@@ -129,7 +136,9 @@ Extensions in `web.jsExtensions` are minified as JavaScript even when `web.js` i
 ² Kept only if ffmpeg decodes the result to exactly the same audio, so these steps need ffmpeg. Otherwise the file is
 left unchanged with the note "decoded audio changed" (mp3packer drops the gapless info of MP3s written by ffmpeg;
 OptiVorbis can make very short files 128 samples shorter in ffmpeg-based players).<br>
-³ Off by default (`exe.enabled`).
+³ Off by default (`exe.enabled`).<br>
+⁴ Not bundled, since its license forbids redistribution: only used if you install it yourself (see
+[Platforms](#platforms)).
 
 More details:
 
@@ -240,21 +249,25 @@ error as a note; it is not recorded as already optimized.
 
 ## Building
 
-Requires Go 1.26. The build system is [Task](https://taskfile.dev), run through `go tool`, so nothing else needs
-installing.
+Requires Go 1.26. The Windows tools are part of the repository, so a plain `go build` (or `go install`) gives a
+complete `fox.exe`; `go build -tags lite` leaves out ImageMagick and Ghostscript. The bundled tools live
+zstd-compressed in `internal/tools/bundle` (`core` and `extra`, the part the lite build leaves out), with the size
+and SHA-256 of each original file in `manifest.json`.
+
+The build system is [Task](https://taskfile.dev), run through `go tool`, so nothing else needs installing.
 
 ```
-go tool task release         # pack all tools and build bin/fox.exe
-go tool task release-lite    # build bin/fox-lite.exe without ImageMagick and Ghostscript, then restore the full bundle
+go tool task build           # build bin/fox.exe
+go tool task build-lite      # build bin/fox-lite.exe without ImageMagick and Ghostscript
+go tool task release         # build both
 go tool task test            # go test ./...
-go tool task bundle          # pack the tools (PLUGINS=<dir>, EXCLUDE=magick,gs)
-go tool task build           # build bin/fox with the current bundle (OUT=bin/name, without .exe)
+go tool task bundle          # update the bundle after changing tools (PLUGINS=<dir>)
 ```
 
-The tools come from FileOptimizer's `Plugins64` folder; the default source is `_ref/Win64/Debug/Plugins64`, set
-`PLUGINS=<dir>` to use another. `build` alone does not pack the bundle. The packer (`go run ./internal/tools/pack`)
-takes `-exclude <comma-separated tool names, no spaces>` and is incremental: unchanged files are reused, so switching
-between the full and the lite bundle takes seconds. A build without a bundle works too and uses tools from `PATH`.
+`bundle` is only needed to update the tools. They come from FileOptimizer's `Plugins64` folder; the default source
+is `_ref/Win64/Debug/Plugins64`, set `PLUGINS=<dir>` to use another. The packer (`go run ./internal/tools/pack`) is
+incremental: unchanged files are reused. It refuses to write a compressed file over 90 MB, to stay clear of GitHub's
+100 MB file limit.
 
 The lite build is about 22 MB smaller.
 
@@ -274,16 +287,21 @@ decline the UAC prompt or cancel the installer, fox writes `%LocalAppData%\fox\v
 only prints a warning with the download URL; delete that file to be asked again. mp3packer also needs the
 Visual C++ 2008 runtime and guetzli needs `OpenCL.dll`; neither is installed by fox.
 
-**fox-lite** uses ImageMagick (`magick.exe`) and Ghostscript from the host if installed. Ghostscript is found on
-`PATH` (`gswin64c.exe`) or in `%ProgramFiles%\gs\gs<version>\bin\gswin64c.exe` (newest version wins). `toolPaths`
-still override this.
+**fox-lite** (build tag `lite`) uses ImageMagick (`magick.exe`) and Ghostscript from the host if installed.
+Ghostscript is found on `PATH` (`gswin64c.exe`) or in `%ProgramFiles%\gs\gs<version>\bin\gswin64c.exe` (newest
+version wins). `toolPaths` still override this.
+
+**pingo** is not bundled on any platform: its license does not allow redistribution. To use it, download it from
+[css-ig.net/pingo](https://css-ig.net/pingo) and put `pingo.exe` on `PATH` (Windows) or set it in `toolPaths`, e.g.
+`{"pingo": ["C:\\Tools\\pingo.exe"]}`. Without it the pingo steps are skipped.
 
 **Linux, macOS.** No tools are bundled. fox uses tools found in `PATH` under their usual names (`oxipng`, `ect`,
 `leanify`, `jpegoptim`, `gifsicle`, `cwebp`, `magick`, `qpdf`, `gs`, `mutool`, `ffmpeg`, `flac`, `minify`, …).
 Tools without a native port (pingo, TruePNG, PngOptimizer, DeflOpt, zRecompress, m7zRepacker, flacout,
 rehuff_theora, PETrim) are never taken from `PATH`; run them through Wine with `toolPaths`, e.g.
 `{"pingo": ["wine", "/opt/fox/pingo.exe"]}`. The same goes for libdeflate's gzip, since GNU gzip lacks level 12:
-`{"gzip": ["libdeflate-gzip"]}`. Missing tools are skipped.
+`{"gzip": ["libdeflate-gzip"]}`. Missing tools are skipped. In the web UI, "Add files" and "Add folder" need the
+`zenity` program on Linux (or `matedialog`/`qarma`); without it, paste paths into the path box or drop files.
 
 ## What's different from FileOptimizer
 
@@ -342,6 +360,10 @@ rehuff_theora, PETrim) are never taken from `PATH`; run them through Wine with `
 
 fox is licensed under the [GNU Affero General Public License v3.0](LICENSE), like FileOptimizer.
 
-The bundled tools are separate programs that keep their own licenses; their home pages are listed in
-[`internal/tools/registry.go`](internal/tools/registry.go). Note that Ghostscript, MuPDF (mutool) and cpdf are
-AGPL-licensed as well.
+The bundled tools are separate programs that keep their own licenses. [THIRD_PARTY.md](THIRD_PARTY.md) lists the
+version, license, copyright holder and source of each, and where to get the source of the GPL, AGPL and MPL tools.
+Ghostscript, MuPDF (mutool), cpdf and OptiVorbis are AGPL-licensed as well. Some bundled tools have no published
+license; they are listed there too.
+
+fox includes **PNGOUT and FLACOUT by Ken Silverman, http://advsys.net/ken**. They may only be redistributed in
+non-commercial projects; see [THIRD_PARTY.md](THIRD_PARTY.md#pngout-and-flacout-ken-silverman).

@@ -19,6 +19,7 @@ const (
 type client struct {
 	mu      sync.Mutex
 	changed map[int64]struct{}
+	removed []int64
 	resync  bool
 	notify  chan struct{}
 }
@@ -42,6 +43,14 @@ func (c *client) requestSnapshot() {
 	c.wake()
 }
 
+// drop tells the browser to forget jobs the server removed.
+func (c *client) drop(ids []int64) {
+	c.mu.Lock()
+	c.removed = append(c.removed, ids...)
+	c.mu.Unlock()
+	c.wake()
+}
+
 func (c *client) wake() {
 	select {
 	case c.notify <- struct{}{}:
@@ -49,16 +58,18 @@ func (c *client) wake() {
 	}
 }
 
-func (c *client) take() (snapshot bool, ids map[int64]struct{}) {
+func (c *client) take() (snapshot bool, ids map[int64]struct{}, removed []int64) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	snapshot, c.resync = c.resync, false
 	ids, c.changed = c.changed, map[int64]struct{}{}
-	return snapshot, ids
+	removed, c.removed = c.removed, nil
+	return snapshot, ids, removed
 }
 
+// stats are the jobs queued and running now, and the session totals of finished jobs,
+// which are kept when jobs leave the list.
 type stats struct {
-	Total   int `json:"total"`
 	Queued  int `json:"queued"`
 	Running int `json:"running"`
 	Done    int `json:"done"`
@@ -67,27 +78,8 @@ type stats struct {
 	// Original and Size cover done jobs only.
 	Original int64 `json:"original"`
 	Size     int64 `json:"size"`
-}
-
-func totals(jobs []optimize.Event) stats {
-	st := stats{Total: len(jobs)}
-	for _, j := range jobs {
-		switch j.State {
-		case optimize.Queued:
-			st.Queued++
-		case optimize.Running:
-			st.Running++
-		case optimize.Done:
-			st.Done++
-			st.Original += j.Original
-			st.Size += j.Size
-		case optimize.Skipped:
-			st.Skipped++
-		case optimize.Failed:
-			st.Failed++
-		}
-	}
-	return st
+	// Elapsed is the wall time during which jobs were queued or running.
+	Elapsed time.Duration `json:"elapsed"`
 }
 
 func (s *server) addClient(c *client) {
@@ -138,7 +130,7 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-c.notify:
-			snapshot, changed := c.take()
+			snapshot, changed, removed := c.take()
 			jobs := s.engine.Jobs()
 			var err error
 			if snapshot {
@@ -154,8 +146,11 @@ func (s *server) events(w http.ResponseWriter, r *http.Request) {
 						err = send("job", e)
 					}
 				}
+				if len(removed) > 0 && err == nil {
+					err = send("remove", removed)
+				}
 			}
-			if err != nil || send("stats", totals(jobs)) != nil || rc.Flush() != nil {
+			if err != nil || send("stats", s.stats(jobs)) != nil || rc.Flush() != nil {
 				return
 			}
 			// Throttle; anything arriving meanwhile is coalesced and sent on the next round.
